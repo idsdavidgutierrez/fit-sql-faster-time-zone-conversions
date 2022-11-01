@@ -1,13 +1,17 @@
-# fit-sql-faster-time-zone-conversions
+# Introduction
 
 
 
 # Requirements
 
+2016 SP1+, azure, MI?
 
+Scheduled process to run the procedure
 
 
 # Functions
+
+need sub headers for different types
 
 
 # Examples
@@ -44,6 +48,25 @@ CROSS APPLY dbo.TZFormatDTO(t.InputDateTimeOffset, t.TargetTimeZone, o.OffsetMin
 
 # Setup
 
+( release skips steps 1- 4)
+
+1. Creae table type
+2. Create table
+3. Create stored procedure
+4. Create functions
+5. Pick parameters for stored procedure
+6. Run the stored procedure
+7. Schedule the stored procedure to run daily
+8. Consider customizing the functions
+9. Validate functions
+
 
 
 # Remarks
+
+- 24 hour assumption
+- aims to reduce the AT TIME ZONE CPU penalty only
+- query plan complexity
+- mapping misses
+- how to reduce the size of the table/procedure runtime
+- AT TIME ZONE bugs
