@@ -68,6 +68,6 @@ Executing the code from the latest release allows steps 1 - 4 to be skipped.
 - 24 hour assumption
 - aims to reduce the AT TIME ZONE CPU penalty only
 - query plan complexity
-- mapping misses
-- how to reduce the size of the table/procedure runtime
-- AT TIME ZONE bugs
+- The functions work by looking for a match in the `TimeZoneConversionHelper` table. If no match is found then fallback code runs which calls the `AT TIME ZONE` operator. Query performance will improve as the percentage of matched inputs increases but the correct results should be returned even if there is no matching row in the table.
+- The `TimeZoneConversionHelper` table takes up around 350 MB of space with default parameters for `RefreshTimeZoneConversionHelperTable`. The best way to reduce the size of the table is to call `RefreshTimeZoneConversionHelperTable` with the `@TimeZoneFilter` parameter set to the time zones relevant to your environment.
+- The functions aim to mimic the behavior of the `AT TIME ZONE` operator. `AT TIME ZONE` uses a Windows mechanism which does not have all historical 
