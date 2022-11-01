@@ -82,13 +82,6 @@ BEGIN
 		FROM sys.time_zone_info;
 	END;
 
-
-	-- be sure to test: deal with NULL values
-	-- TODO: have validation available, account for Aaron's tricky cases
-
-	-- TODO: test on case sensitive
-	-- TODO: 2016/azure/compat level/CE testing
-
 	CREATE TABLE #AddForBatchMode (I INT);
 	IF ISNULL(SERVERPROPERTY('IsTempDBMetadataMemoryOptimized'), 0) = 0
 	BEGIN
@@ -245,7 +238,7 @@ BEGIN
 	SELECT
 		MapType,
 		TimeZoneName,
-		DATEADD(DAY, -1, SamplePoint),
+		DATEADD(HOUR, @SampleHours, SamplePoint),
 		SamplePoint,
 		PreviousOffsetMinutes,
 		OffsetMinutes
