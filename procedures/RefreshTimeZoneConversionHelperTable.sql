@@ -11,7 +11,7 @@ Parameters:
 					  If populated then only those time zones will be loaded into the TimeZoneConversionHelper table.
 					  If not populated then all time zones will be loaded into the TimeZoneConversionHelper table.
 */
-CREATE OR ALTER PROCEDURE dbo.RefreshTimeZoneConversionHelperTable
+ALTER   PROCEDURE [dbo].[RefreshTimeZoneConversionHelperTable]
 (
 	@FixedStartDate DATE = NULL,
 	@RangeYearsBack SMALLINT = 30,
@@ -54,8 +54,8 @@ BEGIN
 	BEGIN TRY
 		SET @RequestedStartYear = ISNULL(DATEPART(YEAR, @FixedStartDate), DATEPART(YEAR, GETDATE()) - @RangeYearsBack);
 		SET @RequestedEndYear = DATEPART(YEAR, GETDATE()) + @RangeYearsForward;
-		SET @PaddedStartDate = DATEADD(HOUR, -28, CAST(ISNULL(@FixedStartDate, DATEFROMPARTS(@RequestedStartYear, 1, 1)) AS DATETIME2));
-		SET @PaddedEndDate = DATEADD(HOUR, 28 + @SampleHours, CAST(DATEFROMPARTS(@RequestedEndYear, 12, 31) AS DATETIME2));
+		SET @PaddedStartDate = DATEADD(HOUR, -24, CAST(ISNULL(@FixedStartDate, DATEFROMPARTS(@RequestedStartYear, 1, 1)) AS DATETIME2));
+		SET @PaddedEndDate = DATEADD(HOUR, 24, CAST(DATEFROMPARTS(@RequestedEndYear, 12, 31) AS DATETIME2));
 		SET @SamplePointsNeeded = CEILING(1.0 * DATEDIFF(HOUR, @PaddedStartDate, @PaddedEndDate) / @SampleHours);
 	END TRY
 	BEGIN CATCH
@@ -81,6 +81,7 @@ BEGIN
 		SELECT [name]
 		FROM sys.time_zone_info;
 	END;
+
 
 	CREATE TABLE #AddForBatchMode (I INT);
 	IF ISNULL(SERVERPROPERTY('IsTempDBMetadataMemoryOptimized'), 0) = 0
@@ -125,12 +126,17 @@ BEGIN
 		CROSS JOIN n10 n8
 	)
 	INSERT INTO #AllSamplePoints (SamplePoint)
-	SELECT DATEADD(HOUR, q.RN * @SampleHours, @PaddedStartDate)
+	SELECT c.calc_date
 	FROM
 	(
 		SELECT TOP (@SamplePointsNeeded) -1 + ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) RN
 		FROM n100Mil
 	) q
+	CROSS APPLY (
+		SELECT DATEADD(HOUR, q.RN * @SampleHours, @PaddedStartDate)
+	) c (calc_date)
+	WHERE c.calc_date > DATEFROMPARTS(DATEPART(YEAR, c.calc_date), 1, 2)
+	AND c.calc_date < DATEFROMPARTS(DATEPART(YEAR, c.calc_date), 12, 31)
 	OPTION (MAXDOP 1);
 
 
@@ -142,7 +148,37 @@ BEGIN
 	INSERT INTO #AllCalendarYears (DateTruncatedToYear)
 	SELECT DISTINCT DATEFROMPARTS(DATEPART(YEAR, SamplePoint), 1, 1)   
 	FROM #AllSamplePoints
+
+	UNION 
+
+	SELECT DATEFROMPARTS(@RequestedEndYear + 1, 1, 1)
+
 	OPTION (MAXDOP 1);
+
+	-- deal with AT TIME ZONE bug that rarely happens for some time zones around the start of the year
+	WITH n49 AS (
+		SELECT v.n FROM (
+		VALUES  (1), (1), (1), (1), (1),
+				(1), (1), (1), (1), (1),
+				(1), (1), (1), (1), (1),
+				(1), (1), (1), (1), (1),
+				(1), (1), (1), (1), (1),
+				(1), (1), (1), (1), (1),
+				(1), (1), (1), (1), (1),
+				(1), (1), (1), (1), (1),
+				(1), (1), (1), (1), (1),
+				(1), (1), (1), (1)
+		) v(n)
+	),
+	n49rn AS (
+		SELECT -25 + ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) offset_hours
+		FROM n49
+	)
+	INSERT INTO #AllSamplePoints (SamplePoint)
+	SELECT DATEADD(HOUR, n49rn.offset_hours, y.DateTruncatedToYear)
+	FROM #AllCalendarYears y
+	CROSS JOIN n49rn;
+
 
 	-- MapType: 0 is UTC -> target, 1 is Source -> UTC
 	CREATE TABLE #SampledTimeZoneOffsets (
@@ -153,6 +189,7 @@ BEGIN
 		PRIMARY KEY (MapType, TimeZoneName, SamplePoint)
 	);
 
+	-- must sample map type 0 first due to AT TIME ZONE bug
 	INSERT INTO #SampledTimeZoneOffsets (MapType, TimeZoneName, SamplePoint, OffsetMinutes)
 	SELECT
 		0,
@@ -187,24 +224,6 @@ BEGIN
 	OPTION (MAXDOP 1);
 
 
-	/*
-	seemingly not possible to reverse the map to get local -> UTC
-
-	SELECT (CAST('2011-03-26 15:59:00.000' AS DATETIME) AT TIME ZONE 'UTC') AT TIME ZONE 'Sakhalin Standard Time' -- +10
-	SELECT (CAST('2011-03-26 16:01:00.000' AS DATETIME) AT TIME ZONE 'UTC')  AT TIME ZONE 'Sakhalin Standard Time' -- +11
-
-	SELECT (CAST('2011-03-27 01:30:30.000' AS DATETIME) AT TIME ZONE 'Sakhalin Standard Time') AT TIME ZONE 'UTC' -- -10
-	SELECT (CAST('2011-03-27 02:30:30.000' AS DATETIME) AT TIME ZONE 'Sakhalin Standard Time')  AT TIME ZONE 'UTC' -- -10
-	SELECT (CAST('2011-03-27 03:30:30.000' AS DATETIME) AT TIME ZONE 'Sakhalin Standard Time')  AT TIME ZONE 'UTC'  -- -11
-
-	SELECT (CAST('2016-03-26 15:59:00.000' AS DATETIME) AT TIME ZONE 'UTC') AT TIME ZONE 'Sakhalin Standard Time' -- +10
-	SELECT (CAST('2016-03-26 16:01:00.000' AS DATETIME) AT TIME ZONE 'UTC')  AT TIME ZONE 'Sakhalin Standard Time' -- +11
-
-	SELECT (CAST('2016-03-27 01:30:30.000' AS DATETIME) AT TIME ZONE 'Sakhalin Standard Time') AT TIME ZONE 'UTC' -- -10
-	SELECT (CAST('2016-03-27 02:30:30.000' AS DATETIME) AT TIME ZONE 'Sakhalin Standard Time')  AT TIME ZONE 'UTC' -- -11
-	SELECT (CAST('2016-03-27 03:30:30.000' AS DATETIME) AT TIME ZONE 'Sakhalin Standard Time')  AT TIME ZONE 'UTC'  -- -11
-	*/
-	
 	INSERT INTO #SampledTimeZoneOffsets (MapType, TimeZoneName, SamplePoint, OffsetMinutes)
 	SELECT
 		1,
@@ -238,7 +257,7 @@ BEGIN
 	SELECT
 		MapType,
 		TimeZoneName,
-		DATEADD(HOUR, -1 * @SampleHours, SamplePoint),
+		PreviousSamplePoint,
 		SamplePoint,
 		PreviousOffsetMinutes,
 		OffsetMinutes
@@ -249,6 +268,7 @@ BEGIN
 			TimeZoneName,
 			cd.SamplePoint,
 			cd.OffsetMinutes,
+			LAG(SamplePoint) OVER (PARTITION BY MapType, TimeZoneName ORDER BY SamplePoint) PreviousSamplePoint,
 			LAG(cd.OffsetMinutes) OVER (PARTITION BY MapType, TimeZoneName ORDER BY cd.SamplePoint) PreviousOffsetMinutes
 			FROM #SampledTimeZoneOffsets cd
 			LEFT OUTER JOIN #AddForBatchMode z ON 1 = 0
@@ -283,11 +303,11 @@ BEGIN
 				 AS DATETIME2(0))
 			) MidOffsetMinutes
 		) ca2
+		WHERE DATEDIFF(MINUTE, PreviousIntervalEnd, IntervalStart) > 1
 		OPTION (MAXDOP 1);
 
 		SET @MergeIntervalCount += 1;
 	END;
-
 
 	CREATE TABLE #UTCMapNoBucket (
 		MapType TINYINT NOT NULL,
@@ -298,7 +318,7 @@ BEGIN
 		PRIMARY KEY (MapType, TimeZoneName, IntervalStart)
 	);
 
-	-- TODO: check start/end values carefully!
+
 	INSERT INTO #UTCMapNoBucket (MapType, TimeZoneName, IntervalStart, IntervalEnd, OffsetMinutes)
 	SELECT src.MapType, src.TimeZoneName, src.IntervalStart, src.IntervalEnd, src.OffsetMinutes
 	FROM (
