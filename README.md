@@ -38,7 +38,7 @@ All three functions have the same two column result set:
 - OffsetMinutes - INT - An interval value used as an input to the corresponding TZFormat function
 - TargetOffsetMinutes - INT - An interval value used as an input to the corresponding TZFormat function
 
-Functions `TZGetOffsetsDT`, `TZGetOffsetsDT2`, and `TZGetOffsetsDTO` are provided to perform the equivalent of `(@Input AT TIME ZONE @SourceTimeZoneName) AT TIME ZONE @TargetTimeZoneName`. They must be paired with the corresponding TZGetOffsets function. These functions can be called with `OUTER APPLY` or `CROSS APPLY`. Each function takes a different type of input data type. 
+Functions `TZFormatDT`, `TZFormatDT2`, and `TZFormatDTO` are provided to perform the equivalent of `(@Input AT TIME ZONE @SourceTimeZoneName) AT TIME ZONE @TargetTimeZoneName`. They must be paired with the corresponding TZGetOffsets function. These functions can be called with `OUTER APPLY` or `CROSS APPLY`. Each function takes a different type of input data type. 
 
 Arguments for `TZFormatDT`:
 - @Input - DATEIME - the datetime value to be converted
