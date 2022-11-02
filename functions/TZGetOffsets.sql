@@ -45,11 +45,11 @@ AS
 RETURN (
 	SELECT OffsetMinutes, TargetOffsetMinutes
 	FROM dbo.TimeZoneConversionHelper l
-	WHERE l.SourceTimeZoneName = N'UTC'
+	WHERE l.SourceTimeZoneName = @SourceTimeZoneName
 	AND l.TargetTimeZoneName = @TargetTimeZoneName
 	AND l.YearBucket = DATEPART(YEAR, @Input)
-	AND l.IntervalStart <= CAST(SWITCHOFFSET(@Input, 0) AS DATETIME2)
-	AND l.IntervalEnd > CAST(SWITCHOFFSET(@Input, 0) AS DATETIME2)
+	AND l.IntervalStart <= @Input
+	AND l.IntervalEnd > @Input
 );
 
 GO
@@ -75,6 +75,6 @@ RETURN (
 	WHERE l.SourceTimeZoneName = N'UTC'
 	AND l.TargetTimeZoneName = @TargetTimeZoneName
 	AND l.YearBucket = DATEPART(YEAR, SWITCHOFFSET(@Input, 0))
-	AND l.IntervalStart <= @Input
-	AND l.IntervalEnd > @Input
+	AND l.IntervalStart <= CAST(SWITCHOFFSET(@Input, 0) AS DATETIME2)
+	AND l.IntervalEnd > CAST(SWITCHOFFSET(@Input, 0) AS DATETIME2)
 );
