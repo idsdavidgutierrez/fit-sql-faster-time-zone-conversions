@@ -238,7 +238,7 @@ BEGIN
 	SELECT
 		MapType,
 		TimeZoneName,
-		DATEADD(HOUR, @SampleHours, SamplePoint),
+		DATEADD(HOUR, -1 * @SampleHours, SamplePoint),
 		SamplePoint,
 		PreviousOffsetMinutes,
 		OffsetMinutes
