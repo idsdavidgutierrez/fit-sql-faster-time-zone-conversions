@@ -136,7 +136,7 @@ Executing the code from the latest release allows steps 1 - 4 to be skipped.
 7. Schedule the `RefreshTimeZoneConversionHelperTable` stored procedure to run on a recurring basis. It is recommended to run the stored procedure daily a few hours after your typical time for applying Windows updates.
 8. The functions support a variety of different inputs and scenarios. Consider customizing the functions to better meet your specific needs. For example:
    - You only need functions that support the data types that you use to store your data. For example, if you don't store any data in the `DATETIMEOFFSET` data type then you don't need the three functions that support that data type as an input.
-   - If all of your data is stored in the same time zone then you may want create wrapper functinos that hard code a value for the `@SourceTimeZoneName` parameters.
+   - If all of your data is stored in the same time zone then you may want create wrapper functions that hard code a value for the `@SourceTimeZoneName` parameters.
    - Don't create the simple version of the functions if you want developers to always use the better performing function pairs.
 
 # Remarks
