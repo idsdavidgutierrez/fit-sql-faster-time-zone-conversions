@@ -65,9 +65,9 @@ Executing the code from the latest release allows steps 1 - 4 to be skipped.
 
 # Remarks
 
-- 24 hour assumption
-- aims to reduce the AT TIME ZONE CPU penalty only
-- query plan complexity
+- The `RefreshTimeZoneConversionHelperTable` stored procedure uses a sampling technique that assumes that a time zone won't change its offset back and forth to the same value within any 24 hour period. As of October 2022, the shortest historical switch is 28 days for the Fiji Standard Time. If you feel that 24 hours is too generous of an assumption it is possible to change the value of the `@SampleHours` variable in `RefreshTimeZoneConversionHelperTable`.
+- The provided functions aim to reduce the CPU time required to perform time zone calculations only. If a query performance problem is caused by a poor cardinality estimate instead of a large number of `AT TIME ZONE` executions then changing to use these functions may not resolve the issue.
+- Replacing `AT TIME ZONE` with these functions is equivalent to adding a join to the query for each function call. This will increase query plan complexity and in some cases may degrade performance for very complex queries.
 - The functions work by looking for a match in the `TimeZoneConversionHelper` table. If no match is found then fallback code runs which calls the `AT TIME ZONE` operator. Query performance will improve as the percentage of matched inputs increases but the correct results should be returned even if there is no matching row in the table.
 - The `TimeZoneConversionHelper` table takes up around 350 MB of space with default parameters for `RefreshTimeZoneConversionHelperTable`. The best way to reduce the size of the table is to call `RefreshTimeZoneConversionHelperTable` with the `@TimeZoneFilter` parameter set to the time zones relevant to your environment.
-- The functions aim to mimic the behavior of the `AT TIME ZONE` operator. `AT TIME ZONE` uses a Windows mechanism which does not have all historical 
+- The functions aim to mimic the behavior of the `AT TIME ZONE` operator. `AT TIME ZONE` uses a Windows mechanism which does not have all historical rule changes. The functions will also not reflect all historical rule changes, mostly prior to 2003.
