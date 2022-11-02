@@ -123,3 +123,55 @@ RETURN (
 			END ConvertedDateTimeOffset
 	) output_columns
 );
+
+GO
+
+
+/*
+Name: TZConvertDTO
+Purpose: performs the equivalent of @Input AT TIME ZONE @TargetTimeZoneName
+Parameters:
+	@Input - the datetimeoffset value to be converted
+	@TargetTimeZoneName - the target time zone of the input in Windows standard format (see sys.time_zone_info)
+*/
+CREATE OR ALTER FUNCTION dbo.TZConvertDTO (
+	@Input DATETIMEOFFSET,
+	@TargetTimeZoneName SYSNAME
+)
+RETURNS TABLE
+AS
+RETURN (
+	SELECT
+		output_columns.ConvertedDate,
+		output_columns.ConvertedDateTime,
+		output_columns.ConvertedDateTime2,
+		output_columns.ConvertedDateTimeOffset
+	FROM (SELECT 1) dummy (d)
+	OUTER APPLY
+	(
+		SELECT OffsetMinutes, TargetOffsetMinutes
+		FROM (
+			SELECT TOP (1) OffsetMinutes, IntervalEnd, TargetOffsetMinutes
+			FROM dbo.TimeZoneConversionHelper l
+			WHERE l.SourceTimeZoneName = N'UTC'
+			AND l.TargetTimeZoneName = @TargetTimeZoneName
+			AND l.YearBucket = DATEPART(YEAR, SWITCHOFFSET(@Input, 0))
+			AND l.IntervalStart <= CAST(SWITCHOFFSET(@Input, 0) AS DATETIME2)
+			ORDER BY l.IntervalStart DESC
+		) q0
+		WHERE q0.IntervalEnd > CAST(SWITCHOFFSET(@Input, 0) AS DATETIME2)
+	) q
+	CROSS APPLY (
+		SELECT CASE
+			WHEN q.OffsetMinutes IS NOT NULL AND q.TargetOffsetMinutes IS NOT NULL THEN
+			SWITCHOFFSET(DATEADD(MINUTE, q.OffsetMinutes - q.TargetOffsetMinutes, @Input), TargetOffsetMinutes) 
+			ELSE @Input AT TIME ZONE @TargetTimeZoneName END ConvertedDTO
+	) helper
+	CROSS APPLY (
+		SELECT
+			CAST(helper.ConvertedDTO AS DATE) ConvertedDate,
+			CAST(helper.ConvertedDTO AS DATETIME) ConvertedDateTime,
+			CAST(helper.ConvertedDTO AS DATETIME2) ConvertedDateTime2,
+			helper.ConvertedDTO ConvertedDateTimeOffset
+	) output_columns
+);
