@@ -10,7 +10,86 @@ The `RefreshTimeZoneConversionHelperTable` stored procedure must be scheduled to
 
 # Functions
 
-need sub headers for different types
+Two different methods of calculating time zone changes are provided. The first method uses a pair of functions that allows for both hash and nested loop joins against the `TimeZoneConversionHelper` table. This method will generally perform better than the simple functions, especially against columnstore tables or when processing lots of data. The first function in the pair returns offset values which are fed as input parameters into the second function that provides the formatted value in the requested time zone.
+
+The simple functions perform the calculation with only one function call but they are limited to nested loop joins only. Think of a nested loop join as an algorithm that requires a small, fixed calculation cost per row for each `AT TIME ZONE` calculation that is replaced.
+
+## Function Pairs (performs better but harder to call)
+
+See the Examples section for an example of how the two function types documented below work together. 
+
+Functions `TZGetOffsetsDT`, `TZGetOffsetsDT2`, and `TZGetOffsetsDTO` are provided to return offset values which are needed for the format functions. These functions must be called with `OUTER APPLY` because they may return an empty set. Each function takes a different type of input data type. 
+
+Arguments for `TZGetOffsetsDT`:
+- @Input - DATETIME - the datetime value to be converted
+- @SourceTimeZoneName - SYSNAME - the source time zone of the input in Windows standard format (see sys.time_zone_info)
+- @TargetTimeZoneName - SYSNAME - the target time zone of the input in Windows standard format (see sys.time_zone_info)
+
+Arguments for `TZGetOffsetsDT2`:
+- @Input - DATETIME2 - the datetime2 value to be converted
+- @SourceTimeZoneName - SYSNAME - the source time zone of the input in Windows standard format (see sys.time_zone_info)
+- @TargetTimeZoneName - SYSNAME - the target time zone of the input in Windows standard format (see sys.time_zone_info)
+
+Arguments for `TZGetOffsetsDTO`:
+- @Input - DATETIMEOFFSET - the datetimeoffset value to be converted
+- @TargetTimeZoneName - SYSNAME - the target time zone of the input in Windows standard format (see sys.time_zone_info)
+
+All three functions have the same two column result set:
+- OffsetMinutes - INT - An interval value used as an input to the corresponding TZFormat function
+- TargetOffsetMinutes - INT - An interval value used as an input to the corresponding TZFormat function
+
+Functions `TZGetOffsetsDT`, `TZGetOffsetsDT2`, and `TZGetOffsetsDTO` are provided to perform the equivalent of `(@Input AT TIME ZONE @SourceTimeZoneName) AT TIME ZONE @TargetTimeZoneName`. They must be paired with the corresponding TZGetOffsets function. These functions can be called with `OUTER APPLY` or `CROSS APPLY`. Each function takes a different type of input data type. 
+
+Arguments for `TZFormatDT`:
+- @Input - DATEIME - the datetime value to be converted
+- @SourceTimeZoneName - SYSNAME - the source time zone of the input in Windows standard format (see sys.time_zone_info)
+- @TargetTimeZoneName- SYSNAME - the target time zone of the input in Windows standard format (see sys.time_zone_info)
+- @OffsetMinutes - INT - the OffsetMinutes value returned from dbo.TZGetOffsetsDT()
+- @TargetOffsetMinutes - INT- the TargetOffsetMinutes value returned from dbo.TZGetOffsetsDT()
+
+Arguments for `TZFormatDT2`:
+- @Input - DATEIME2 - the datetime2 value to be converted
+- @SourceTimeZoneName - SYSNAME - the source time zone of the input in Windows standard format (see sys.time_zone_info)
+- @TargetTimeZoneName- SYSNAME - the target time zone of the input in Windows standard format (see sys.time_zone_info)
+- @OffsetMinutes - INT - the OffsetMinutes value returned from dbo.TZGetOffsetsDT2()
+- @TargetOffsetMinutes - INT- the TargetOffsetMinutes value returned from dbo.TZGetOffsetsDT2()
+
+Arguments for `TZFormatDTO`:
+- @Input - DATEIMEOFFSET - the datetimeoffset value to be converted
+- @TargetTimeZoneName- SYSNAME - the target time zone of the input in Windows standard format (see sys.time_zone_info)
+- @OffsetMinutes - INT - the OffsetMinutes value returned from dbo.TZGetOffsetsDTO()
+- @TargetOffsetMinutes - INT- the TargetOffsetMinutes value returned from dbo.TZGetOffsetsDTO()
+
+All three functions have the same four column result set:
+- ConvertedDate - the converted value as a DATE data type
+- ConvertedDateTime - the converted value as a DATETIME data type
+- ConvertedDateTime2 - the converted value as a DATETIME2 data type
+- ConvertedDateTimeOffset - the converted value as a DATETIMEOFFSET data type
+
+
+## Simple Functions (performs worse but easier to call)
+
+Functions `TZConvertDT`, `TZConvertDT2`, and `TZConvertDTO` are provided to perform the equivalent of `(@Input AT TIME ZONE @SourceTimeZoneName) AT TIME ZONE @TargetTimeZoneName`. Each function takes a different type of input data type. These functions can be called with `OUTER APPLY` or `CROSS APPLY`.
+
+Arguments for `TZConvertDT`:
+ - @Input - DATETIME - the datetime value to be converted
+ - @SourceTimeZoneName - SYSNAME - the source time zone of the input in Windows standard format (see sys.time_zone_info)
+ - @TargetTimeZoneName - SYSNAME - the target time zone of the input in Windows standard format (see sys.time_zone_info)
+
+Arguments for `TZConvertDT2`:
+ - @Input - DATETIME2 - the datetime2 value to be converted
+ - @SourceTimeZoneName - SYSNAME - the source time zone of the input in Windows standard format (see sys.time_zone_info)
+ - @TargetTimeZoneName - SYSNAME - the target time zone of the input in Windows standard format (see sys.time_zone_info)
+ 
+Arguments for `TZConvertDT2`:
+ - @Input - DATETIMEOFFSET - the datetimeoffset value to be converted
+ - @TargetTimeZoneName - SYSNAME - the target time zone of the input in Windows standard format (see sys.time_zone_info)
+
+All three functions have the same four column result set:
+- ConvertedDate - the converted value as a DATE data type
+- ConvertedDateTime - the converted value as a DATETIME data type
+- ConvertedDateTime2 - the converted value as a DATETIME2 data type
+- ConvertedDateTimeOffset - the converted value as a DATETIMEOFFSET data type
 
 
 # Examples
@@ -27,15 +106,6 @@ DECLARE @t TABLE (
 INSERT INTO @t (InputDateTime, InputDateTime2, InputDateTimeOffset, SourceTimeZone, TargetTimeZone)
 VALUES (GETDATE(), SYSDATETIME(), SYSDATETIMEOFFSET(), N'Romance Standard Time', N'Aleutian Standard Time');
 
-
--- convert a DATETIME to a DATETIMEOFFSET with fixed source and target time zones using the simple function
-SELECT
-	t.InputDateTime AT TIME ZONE N'Central Standard Time' AT TIME ZONE N'E. Africa Standard Time',
-	c.ConvertedDateTimeOffset
-FROM @t t
-CROSS APPLY dbo.TZConvertDT(t.InputDateTime, N'Central Standard Time', N'E. Africa Standard Time') c;
-
-
 -- convert a DATETIMEOFFSET to a DATETIME2 with a dynamic target time zone using the pair of functions
 SELECT
 	CAST(t.InputDateTimeOffset AT TIME ZONE t.TargetTimeZone AS DATETIME2),
@@ -43,6 +113,13 @@ SELECT
 FROM @t t
 OUTER APPLY dbo.TZGetOffsetsDTO(t.InputDateTimeOffset, t.TargetTimeZone) o
 CROSS APPLY dbo.TZFormatDTO(t.InputDateTimeOffset, t.TargetTimeZone, o.OffsetMinutes, o.TargetOffsetMinutes) f;
+
+-- convert a DATETIME to a DATETIMEOFFSET with fixed source and target time zones using the simple function
+SELECT
+	t.InputDateTime AT TIME ZONE N'Central Standard Time' AT TIME ZONE N'E. Africa Standard Time',
+	c.ConvertedDateTimeOffset
+FROM @t t
+CROSS APPLY dbo.TZConvertDT(t.InputDateTime, N'Central Standard Time', N'E. Africa Standard Time') c;
 ```
 
 # Setup
