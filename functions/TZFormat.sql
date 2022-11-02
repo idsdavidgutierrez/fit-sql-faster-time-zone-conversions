@@ -137,27 +137,17 @@ RETURN (
 		output_columns.ConvertedDateTimeOffset
 	FROM
 	(
-		SELECT 
-			DATEADD(MINUTE, @OffsetMinutes, @Input) ConvertedDT,
-			@Input AT TIME ZONE @TargetTimeZoneName FallBackDTO
+		SELECT CASE
+			WHEN @OffsetMinutes IS NOT NULL AND @TargetOffsetMinutes IS NOT NULL THEN
+			SWITCHOFFSET(DATEADD(MINUTE, @OffsetMinutes - @TargetOffsetMinutes, @Input), @TargetOffsetMinutes) 
+			ELSE @Input AT TIME ZONE @TargetTimeZoneName END ConvertedDTO
 	) helper
 	CROSS APPLY (
 		SELECT
-			CASE
-			WHEN @OffsetMinutes IS NOT NULL THEN CAST(helper.ConvertedDT AS DATE)
-			ELSE CAST(helper.FallBackDTO AS DATE)
-			END ConvertedDate,
-			CASE
-			WHEN @OffsetMinutes IS NOT NULL THEN CAST(helper.ConvertedDT AS DATETIME)
-			ELSE CAST(helper.FallBackDTO AS DATETIME)
-			END ConvertedDateTime,
-			CASE
-			WHEN @OffsetMinutes IS NOT NULL THEN CAST(helper.ConvertedDT AS DATETIME2)
-			ELSE CAST(helper.FallBackDTO AS DATETIME2)
-			END ConvertedDateTime2,
-			CASE
-			WHEN @OffsetMinutes IS NOT NULL AND @TargetOffsetMinutes IS NOT NULL THEN SWITCHOFFSET(DATEADD(MINUTE, @OffsetMinutes - @TargetOffsetMinutes, @Input), @TargetOffsetMinutes)
-			ELSE helper.FallBackDTO
-			END ConvertedDateTimeOffset
+			CAST(helper.ConvertedDTO AS DATE) ConvertedDate,
+			CAST(helper.ConvertedDTO AS DATETIME) ConvertedDateTime,
+			CAST(helper.ConvertedDTO AS DATETIME2) ConvertedDateTime2,
+			helper.ConvertedDTO ConvertedDateTimeOffset
 	) output_columns
+
 );
