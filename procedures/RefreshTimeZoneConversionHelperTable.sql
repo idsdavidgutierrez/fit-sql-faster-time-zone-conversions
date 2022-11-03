@@ -11,7 +11,7 @@ Parameters:
 					  If populated then only those time zones will be loaded into the TimeZoneConversionHelper table.
 					  If not populated then all time zones will be loaded into the TimeZoneConversionHelper table.
 */
-ALTER   PROCEDURE [dbo].[RefreshTimeZoneConversionHelperTable]
+CREATE OR ALTER PROCEDURE [dbo].[RefreshTimeZoneConversionHelperTable]
 (
 	@FixedStartDate DATE = NULL,
 	@RangeYearsBack SMALLINT = 30,
