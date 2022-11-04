@@ -77,7 +77,7 @@ BEGIN
 		dt.InputDT,
 		dt.InputDTO,
 		nt.NativeDTtoDTO
-	FROM TimeZoneConversionHelper h
+	FROM TimeZoneConversionHelper_CCI h
 	CROSS APPLY (
 		SELECT DATEADD(SECOND, CEILING(0.5 * DATEDIFF_BIG(SECOND, h.IntervalStart, h.IntervalEnd)), h.IntervalStart)
 	) s (Input)
@@ -126,52 +126,50 @@ BEGIN
 	CAST(nt.NativeDTO AS DATETIME2) <> c3.ConvertedDateTime2 OR CAST(nt.NativeDTO AS DATETIME2) <> f3.ConvertedDateTime2 OR
 	nt.NativeDTO <> c3.ConvertedDateTimeOffset OR nt.NativeDTO <> f3.ConvertedDateTimeOffset;
 
-	-- RETURN;
+	--RETURN;
 
 	SELECT
-	res.SourceTimeZoneName,
-	res.TargetTimeZoneName,
-	res.InputDateTime,
-	res.NativeDTO,
-	res.SimpleDTO,
-	res.PairDTO
-	FROM
-	(
-		SELECT
-			h.SourceTimeZoneName,
-			h.TargetTimeZoneName,
-			s.InputDateTime,
-			s.InputDateTime AT TIME ZONE SourceTimeZoneName AT TIME ZONE TargetTimeZoneName NativeDTO,
-			c.ConvertedDateTimeOffset SimpleDTO,
-			f.ConvertedDateTimeOffset PairDTO
-		FROM TimeZoneConversionHelper h
-		CROSS APPLY (
-		VALUES
-			(-7200),
-			(-5400),
-			(-3600),
-			(-1800),
-			(-60),
-			(-1),
-			(0),
-			(1),
-			(60),
-			(1800),
-			(3600),
-			(5400),
-			(7200),
-			(CEILING(0.5 * DATEDIFF_BIG(SECOND, h.IntervalStart, h.IntervalEnd)))
-		) second_offsets (offset)
-		CROSS APPLY (
-			SELECT DATEADD(SECOND, second_offsets.offset, h.IntervalStart)
-		) s (InputDateTime)
-		CROSS APPLY dbo.TZConvertDT2(s.InputDateTime, h.SourceTimeZoneName, h.TargetTimeZoneName) c
-		OUTER APPLY dbo.TZGetOffsetsDT2(s.InputDateTime, h.SourceTimeZoneName, h.TargetTimeZoneName) o
-		CROSS APPLY dbo.TZFormatDT2(s.InputDateTime, h.SourceTimeZoneName, h.TargetTimeZoneName, o.OffsetMinutes, o.TargetOffsetMinutes) f
-	) res
-	WHERE res.NativeDTO <> res.SimpleDTO OR res.NativeDTO <> res.PairDTO OR res.SimpleDTO IS NULL OR res.PairDTO IS NULL
-	--OPTION (USE HINT('ENABLE_PARALLEL_PLAN_PREFERENCE')); -- this helps
+		h.SourceTimeZoneName,
+		h.TargetTimeZoneName,
+		s.InputDateTime,
+		s.InputDateTime AT TIME ZONE SourceTimeZoneName AT TIME ZONE TargetTimeZoneName NativeDTO
+	FROM TimeZoneConversionHelper_CCI h
+	CROSS APPLY (
+	VALUES
+		(-7200),
+		(-5400),
+		(-3600),
+		(-1800),
+		(-60),
+		(-1),
+		(0),
+		(1),
+		(60),
+		(1800),
+		(3600),
+		(5400),
+		(7200),
+		(CEILING(0.5 * DATEDIFF_BIG(SECOND, h.IntervalStart, h.IntervalEnd)))
+	) second_offsets (offset)
+	CROSS APPLY (
+		SELECT DATEADD(SECOND, second_offsets.offset, h.IntervalStart)
+	) s (InputDateTime)
+	CROSS APPLY (
+		SELECT s.InputDateTime AT TIME ZONE SourceTimeZoneName AT TIME ZONE TargetTimeZoneName
+	) nt (NativeDT2toDTO)
+	CROSS APPLY dbo.TZConvertDT2(s.InputDateTime, h.SourceTimeZoneName, h.TargetTimeZoneName) c2
+	OUTER APPLY dbo.TZGetOffsetsDT2(s.InputDateTime, h.SourceTimeZoneName, h.TargetTimeZoneName) o
+	CROSS APPLY dbo.TZFormatDT2(s.InputDateTime, h.SourceTimeZoneName, h.TargetTimeZoneName, o.OffsetMinutes, o.TargetOffsetMinutes) f2 
+	WHERE	
+	c2.ConvertedDate IS NULL OR c2.ConvertedDateTime IS NULL OR c2.ConvertedDateTime2 IS NULL OR c2.ConvertedDateTimeOffset IS NULL OR
 
+	f2.ConvertedDate IS NULL OR f2.ConvertedDateTime IS NULL OR f2.ConvertedDateTime2 IS NULL OR f2.ConvertedDateTimeOffset IS NULL OR
+
+	CAST(nt.NativeDT2toDTO AS DATE) <> c2.ConvertedDate OR CAST(nt.NativeDT2toDTO AS DATE) <> f2.ConvertedDate OR
+	CAST(nt.NativeDT2toDTO AS DATETIME) <> c2.ConvertedDateTime OR CAST(nt.NativeDT2toDTO AS DATETIME) <> f2.ConvertedDateTime OR
+	CAST(nt.NativeDT2toDTO AS DATETIME2) <> c2.ConvertedDateTime2 OR CAST(nt.NativeDT2toDTO AS DATETIME2) <> f2.ConvertedDateTime2 OR
+	nt.NativeDT2toDTO <> c2.ConvertedDateTimeOffset OR nt.NativeDT2toDTO <> f2.ConvertedDateTimeOffset
+	--OPTION (USE HINT('ENABLE_PARALLEL_PLAN_PREFERENCE')); -- this helps
 
 END;
 
