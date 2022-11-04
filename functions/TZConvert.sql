@@ -25,14 +25,13 @@ RETURN (
 		SELECT OffsetMinutes, TargetOffsetMinutes
 		FROM (
 			SELECT TOP (1) OffsetMinutes, IntervalEnd, TargetOffsetMinutes
-			FROM dbo.TimeZoneConversionHelper l
-			WHERE l.SourceTimeZoneName = @SourceTimeZoneName
-			AND l.TargetTimeZoneName = @TargetTimeZoneName
-			AND l.YearBucket = DATEPART(YEAR, @Input)
-			AND l.IntervalStart <= CAST(@Input AS DATETIME2)
+			FROM dbo.TimeZoneConversionHelper_RS l
+			WHERE l.SourceTimeZoneNameChecksum = CHECKSUM(@SourceTimeZoneName COLLATE Latin1_General_100_BIN2)
+			AND l.TargetTimeZoneNameChecksum = CHECKSUM(@TargetTimeZoneName COLLATE Latin1_General_100_BIN2)
+			AND l.IntervalStart <= CAST(@Input AS DATETIME2(7))
 			ORDER BY l.IntervalStart DESC
 		) q0
-		WHERE q0.IntervalEnd > CAST(@Input AS DATETIME2)
+		WHERE q0.IntervalEnd > CAST(@Input AS DATETIME2(7))
 	) q
 	CROSS APPLY (
 		SELECT 
@@ -89,10 +88,9 @@ RETURN (
 		SELECT OffsetMinutes, TargetOffsetMinutes
 		FROM (
 			SELECT TOP (1) OffsetMinutes, IntervalEnd, TargetOffsetMinutes
-			FROM dbo.TimeZoneConversionHelper l
-			WHERE l.SourceTimeZoneName = @SourceTimeZoneName
-			AND l.TargetTimeZoneName = @TargetTimeZoneName
-			AND l.YearBucket = DATEPART(YEAR, @Input)
+			FROM dbo.TimeZoneConversionHelper_RS l
+			WHERE l.SourceTimeZoneNameChecksum = CHECKSUM(@SourceTimeZoneName COLLATE Latin1_General_100_BIN2)
+			AND l.TargetTimeZoneNameChecksum = CHECKSUM(@TargetTimeZoneName COLLATE Latin1_General_100_BIN2)
 			AND l.IntervalStart <= @Input
 			ORDER BY l.IntervalStart DESC
 		) q0
@@ -152,14 +150,13 @@ RETURN (
 		SELECT OffsetMinutes, TargetOffsetMinutes
 		FROM (
 			SELECT TOP (1) OffsetMinutes, IntervalEnd, TargetOffsetMinutes
-			FROM dbo.TimeZoneConversionHelper l
-			WHERE l.SourceTimeZoneName = N'UTC'
-			AND l.TargetTimeZoneName = @TargetTimeZoneName
-			AND l.YearBucket = DATEPART(YEAR, SWITCHOFFSET(@Input, 0))
-			AND l.IntervalStart <= CAST(SWITCHOFFSET(@Input, 0) AS DATETIME2)
+			FROM dbo.TimeZoneConversionHelper_RS l
+			WHERE l.SourceTimeZoneNameChecksum = CHECKSUM(N'UTC' COLLATE Latin1_General_100_BIN2)
+			AND l.TargetTimeZoneNameChecksum = CHECKSUM(@TargetTimeZoneName COLLATE Latin1_General_100_BIN2)
+			AND l.IntervalStart <= CAST(SWITCHOFFSET(@Input, 0) AS DATETIME2(7))
 			ORDER BY l.IntervalStart DESC
 		) q0
-		WHERE q0.IntervalEnd > CAST(SWITCHOFFSET(@Input, 0) AS DATETIME2)
+		WHERE q0.IntervalEnd > CAST(SWITCHOFFSET(@Input, 0) AS DATETIME2(7))
 	) q
 	CROSS APPLY (
 		SELECT CASE
