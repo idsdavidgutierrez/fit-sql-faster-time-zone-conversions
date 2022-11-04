@@ -63,47 +63,49 @@ BEGIN
 	END CATCH;
 
 	-- use @TimeZoneFilter if it has at least one row, otherwise get all time zones
-	CREATE TABLE #TimeZones (TimeZoneName SYSNAME NOT NULL, PRIMARY KEY (TimeZoneName)); 
+	CREATE TABLE #TimeZones (TimeZoneName SYSNAME NOT NULL, TimeZoneChecksum INT NOT NULL, PRIMARY KEY (TimeZoneChecksum)); 
 
 	IF EXISTS (SELECT 1 FROM @TimeZoneFilter)
 	BEGIN
-		INSERT INTO #TimeZones (TimeZoneName)
-		SELECT TimeZoneName
+		INSERT INTO #TimeZones (TimeZoneName, TimeZoneChecksum)
+		SELECT TimeZoneName, CHECKSUM(TimeZoneName COLLATE Latin1_General_100_BIN2)
 		FROM @TimeZoneFilter
 
 		UNION
 
-		SELECT N'UTC';
+		SELECT N'UTC', CHECKSUM(N'UTC' COLLATE Latin1_General_100_BIN2);
 	END
 	ELSE
 	BEGIN
-		INSERT INTO #TimeZones (TimeZoneName)
-		SELECT [name]
+		INSERT INTO #TimeZones (TimeZoneName, TimeZoneChecksum)
+		SELECT [name], CHECKSUM([name] COLLATE Latin1_General_100_BIN2)
 		FROM sys.time_zone_info;
 	END;
 
+	-- TODO: get checksums for ALL time zones in catalog view
+	-- TODO: if there's a collision, get previously mapped zones from CCI and don't process the colliding ones
+	-- TODO: throw an error message at the very end with bad time zones and instructions for work arounds
 
-	CREATE TABLE #AddForBatchMode (I INT);
-	IF ISNULL(SERVERPROPERTY('IsTempDBMetadataMemoryOptimized'), 0) = 0
-	BEGIN
-		CREATE CLUSTERED COLUMNSTORE INDEX CCI ON #AddForBatchMode;
-	END;
 
-	-- Used later for partition switching so must match TimeZoneConversionHelper exactly
-	DROP TABLE IF EXISTS dbo.TimeZoneConversionHelper_TEMP;
-	CREATE TABLE dbo.TimeZoneConversionHelper_TEMP (
-		SourceTimeZoneName SYSNAME NOT NULL,
-		TargetTimeZoneName SYSNAME NOT NULL,
-		YearBucket SMALLINT NOT NULL,
-		IntervalStart DATETIME2(0) NOT NULL,
-		IntervalEnd DATETIME2(0) NOT NULL,
-		OffsetMinutes INT NOT NULL, -- DATEADD uses an INT parameter
-		TargetOffsetMinutes INT NOT NULL,
-		INDEX CI_TimeZoneConversionHelper_TEMP CLUSTERED (SourceTimeZoneName, TargetTimeZoneName, YearBucket, IntervalStart) 
+
+	-- Used later for partition switching so must match TimeZoneConversionHelper_CCI exactly
+	-- don't make the data types smaller
+	DROP TABLE IF EXISTS dbo.TimeZoneConversionHelper_CCI_For_Switch;
+	CREATE TABLE dbo.TimeZoneConversionHelper_CCI_For_Switch (
+		[SourceTimeZoneNameChecksum] INT NOT NULL,
+		[TargetTimeZoneNameChecksum] INT NOT NULL,
+		[YearBucket] [smallint] NOT NULL,
+		[IntervalStart] [datetime2](7) NOT NULL,
+		[IntervalEnd] [datetime2](7) NOT NULL,
+		[OffsetMinutes] [int] NOT NULL,
+		[TargetOffsetMinutes] [int] NOT NULL,
+		[SourceTimeZoneName] [sysname] NOT NULL,
+		[TargetTimeZoneName] [sysname] NOT NULL,
+		INDEX CCI_TimeZoneConversionHelper_CCI_For_Switch CLUSTERED COLUMNSTORE
 	);
 
 	CREATE TABLE #AllSamplePoints (
-		SamplePoint DATETIME2(0) NOT NULL,
+		SamplePoint DATETIME2(7) NOT NULL,
 		PRIMARY KEY (SamplePoint)
 	);
 
@@ -141,7 +143,7 @@ BEGIN
 
 
 	CREATE TABLE #AllCalendarYears (
-		DateTruncatedToYear DATETIME2(0) NOT NULL,
+		DateTruncatedToYear DATETIME2(7) NOT NULL,
 		PRIMARY KEY (DateTruncatedToYear)
 	);
 
@@ -183,80 +185,82 @@ BEGIN
 	-- MapType: 0 is UTC -> target, 1 is Source -> UTC
 	CREATE TABLE #SampledTimeZoneOffsets (
 		MapType TINYINT NOT NULL,
-		TimeZoneName SYSNAME NOT NULL,
-		SamplePoint DATETIME2(0) NOT NULL,
+		TimeZoneChecksum INT NOT NULL,
+		SamplePoint DATETIME2(7) NOT NULL,
 		OffsetMinutes INT NOT NULL,
-		PRIMARY KEY (MapType, TimeZoneName, SamplePoint)
+		PRIMARY KEY (MapType, TimeZoneChecksum, SamplePoint)
 	);
 
 	-- must sample map type 0 first due to AT TIME ZONE bug
-	INSERT INTO #SampledTimeZoneOffsets (MapType, TimeZoneName, SamplePoint, OffsetMinutes)
+	INSERT INTO #SampledTimeZoneOffsets (MapType, TimeZoneChecksum, SamplePoint, OffsetMinutes)
 	SELECT
 		0,
-		tz.TimeZoneName,
+		tz.TimeZoneChecksum,
 		cd.SamplePoint,
 		o.OffsetMinutes
 	FROM #TimeZones tz
 	CROSS JOIN #AllSamplePoints cd
 	CROSS APPLY (
-		SELECT DATEDIFF(MINUTE, cd.SamplePoint, CAST(SWITCHOFFSET(cd.SamplePoint, 0) AT TIME ZONE tz.TimeZoneName AS DATETIME2(0)))
+		SELECT DATEDIFF(MINUTE, cd.SamplePoint, CAST(SWITCHOFFSET(cd.SamplePoint, 0) AT TIME ZONE tz.TimeZoneName AS DATETIME2(7)))
 	) o (OffsetMinutes)
-	LEFT OUTER JOIN #AddForBatchMode z ON 1 = 0
+	LEFT OUTER JOIN dbo.TimeZoneConversionHelper_CCI_For_Switch z ON 1 = 0 -- allow batch mode
 	WHERE tz.TimeZoneName <> N'UTC'
 	OPTION (MAXDOP 1, NO_PERFORMANCE_SPOOL);
 
 
 	CREATE TABLE #TimeZonesWithConstantOffsetToUTC (
-		TimeZoneName SYSNAME NOT NULL,
+		TimeZoneChecksum INT NOT NULL,
 		OffsetMinutesFromUTC INT NOT NULL,
-		PRIMARY KEY (TimeZoneName)
+		PRIMARY KEY (TimeZoneChecksum)
 	);
 	
-	INSERT INTO #TimeZonesWithConstantOffsetToUTC (TimeZoneName, OffsetMinutesFromUTC)
-	SELECT TimeZoneName, MIN(OffsetMinutes)
+	INSERT INTO #TimeZonesWithConstantOffsetToUTC (TimeZoneChecksum, OffsetMinutesFromUTC)
+	SELECT TimeZoneChecksum, MIN(OffsetMinutes)
 	FROM #SampledTimeZoneOffsets
-	GROUP BY TimeZoneName
+	GROUP BY TimeZoneChecksum
 	HAVING MIN(OffsetMinutes) = MAX(OffsetMinutes)
 
 	UNION ALL
 
-	SELECT N'UTC', 0
+	SELECT CHECKSUM(N'UTC' COLLATE Latin1_General_100_BIN2), 0
 	OPTION (MAXDOP 1);
 
 
-	INSERT INTO #SampledTimeZoneOffsets (MapType, TimeZoneName, SamplePoint, OffsetMinutes)
+	INSERT INTO #SampledTimeZoneOffsets (MapType, TimeZoneChecksum, SamplePoint, OffsetMinutes)
 	SELECT
 		1,
-		tz.TimeZoneName,
+		tz.TimeZoneChecksum,
 		cd.SamplePoint,
 		o.OffsetMinutes
 	FROM #TimeZones tz
 	CROSS JOIN #AllSamplePoints cd
 	CROSS APPLY (
-		SELECT DATEDIFF(MINUTE, cd.SamplePoint, CAST(SWITCHOFFSET(cd.SamplePoint AT TIME ZONE tz.TimeZoneName, 0) AS DATETIME2(0)))
+		SELECT DATEDIFF(MINUTE, cd.SamplePoint, CAST(SWITCHOFFSET(cd.SamplePoint AT TIME ZONE tz.TimeZoneName, 0) AS DATETIME2(7)))
 	) o (OffsetMinutes)
-	LEFT OUTER JOIN #AddForBatchMode z ON 1 = 0
+	LEFT OUTER JOIN dbo.TimeZoneConversionHelper_CCI_For_Switch z ON 1 = 0 -- allow batch mode
 	WHERE NOT EXISTS (
 		SELECT 1
 		FROM #TimeZonesWithConstantOffsetToUTC t
-		WHERE tz.TimeZoneName = t.TimeZoneName
+		WHERE tz.TimeZoneChecksum = t.TimeZoneChecksum
 	)
 	OPTION (MAXDOP 1, NO_PERFORMANCE_SPOOL);
 
 
 	CREATE TABLE #IntervalGroups (
 		MapType TINYINT NOT NULL,
+		TimeZoneChecksum INT NOT NULL,
 		TimeZoneName SYSNAME NOT NULL,
-		PreviousIntervalEnd DATETIME2(0) NOT NULL,
-		IntervalStart DATETIME2(0) NOT NULL,
+		PreviousIntervalEnd DATETIME2(7) NOT NULL,
+		IntervalStart DATETIME2(7) NOT NULL,
 		PreviousOffsetMinutes INT NOT NULL,
 		OffsetMinutes INT NOT NULL
 	);
 
-	INSERT INTO #IntervalGroups (MapType, TimeZoneName, PreviousIntervalEnd, IntervalStart, PreviousOffsetMinutes, OffsetMinutes)
+	INSERT INTO #IntervalGroups (MapType, TimeZoneChecksum, TimeZoneName, PreviousIntervalEnd, IntervalStart, PreviousOffsetMinutes, OffsetMinutes)
 	SELECT
 		MapType,
-		TimeZoneName,
+		tz.TimeZoneChecksum,
+		tz.TimeZoneName,
 		PreviousSamplePoint,
 		SamplePoint,
 		PreviousOffsetMinutes,
@@ -265,19 +269,20 @@ BEGIN
 	(
 		SELECT
 			MapType,
-			TimeZoneName,
+			TimeZoneChecksum,
 			cd.SamplePoint,
 			cd.OffsetMinutes,
-			LAG(SamplePoint) OVER (PARTITION BY MapType, TimeZoneName ORDER BY SamplePoint) PreviousSamplePoint,
-			LAG(cd.OffsetMinutes) OVER (PARTITION BY MapType, TimeZoneName ORDER BY cd.SamplePoint) PreviousOffsetMinutes
+			LAG(SamplePoint) OVER (PARTITION BY MapType, TimeZoneChecksum ORDER BY SamplePoint) PreviousSamplePoint,
+			LAG(cd.OffsetMinutes) OVER (PARTITION BY MapType, TimeZoneChecksum ORDER BY cd.SamplePoint) PreviousOffsetMinutes
 			FROM #SampledTimeZoneOffsets cd
-			LEFT OUTER JOIN #AddForBatchMode z ON 1 = 0
+			LEFT OUTER JOIN dbo.TimeZoneConversionHelper_CCI_For_Switch z ON 1 = 0 -- allow batch mode
 			WHERE NOT EXISTS (
 				SELECT 1
 				FROM #TimeZonesWithConstantOffsetToUTC t
-				WHERE cd.TimeZoneName = t.TimeZoneName
+				WHERE cd.TimeZoneChecksum = t.TimeZoneChecksum
 			)
 		) q
+	INNER JOIN #TimeZones tz ON q.TimeZoneChecksum = tz.TimeZoneChecksum
 	WHERE q.OffsetMinutes <> PreviousOffsetMinutes
 	OPTION (MAXDOP 1);
 
@@ -300,7 +305,7 @@ BEGIN
 					WHEN MapType = 0 THEN SWITCHOFFSET(ca.MidPoint, 0) AT TIME ZONE u.TimeZoneName
 					WHEN MapType = 1 THEN SWITCHOFFSET(ca.MidPoint AT TIME ZONE u.TimeZoneName, 0)
 					END
-				 AS DATETIME2(0))
+				 AS DATETIME2(7))
 			) MidOffsetMinutes
 		) ca2
 		WHERE DATEDIFF(MINUTE, PreviousIntervalEnd, IntervalStart) > 1
@@ -311,32 +316,32 @@ BEGIN
 
 	CREATE TABLE #UTCMapNoBucket (
 		MapType TINYINT NOT NULL,
-		TimeZoneName SYSNAME NOT NULL,		
-		IntervalStart DATETIME2(0) NOT NULL,
-		IntervalEnd DATETIME2(0) NOT NULL,
+		TimeZoneChecksum INT NOT NULL,		
+		IntervalStart DATETIME2(7) NOT NULL,
+		IntervalEnd DATETIME2(7) NOT NULL,
 		OffsetMinutes INT NOT NULL,
-		PRIMARY KEY (MapType, TimeZoneName, IntervalStart)
+		PRIMARY KEY (MapType, TimeZoneChecksum, IntervalStart)
 	);
 
 
-	INSERT INTO #UTCMapNoBucket (MapType, TimeZoneName, IntervalStart, IntervalEnd, OffsetMinutes)
-	SELECT src.MapType, src.TimeZoneName, src.IntervalStart, src.IntervalEnd, src.OffsetMinutes
+	INSERT INTO #UTCMapNoBucket (MapType, TimeZoneChecksum, IntervalStart, IntervalEnd, OffsetMinutes)
+	SELECT src.MapType, src.TimeZoneChecksum, src.IntervalStart, src.IntervalEnd, src.OffsetMinutes
 	FROM (
 		SELECT
 			MapType,
-			TimeZoneName,
-			IntervalStart,
-			ISNULL(LEAD(PreviousIntervalEnd) OVER (PARTITION BY MapType, TimeZoneName ORDER BY IntervalStart), @PaddedEndDate) IntervalEnd,		
-			OffsetMinutes
-		FROM #IntervalGroups
-		LEFT OUTER JOIN #AddForBatchMode z ON 1 = 0
+			TimeZoneChecksum,
+			i.IntervalStart,
+			ISNULL(LEAD(PreviousIntervalEnd) OVER (PARTITION BY MapType, TimeZoneChecksum ORDER BY i.IntervalStart), @PaddedEndDate) IntervalEnd,		
+			i.OffsetMinutes
+		FROM #IntervalGroups i
+		LEFT OUTER JOIN dbo.TimeZoneConversionHelper_CCI_For_Switch z ON 1 = 0 -- allow batch mode
 
 		UNION ALL
 
-		SELECT MapType, TimeZoneName, @PaddedStartDate, PreviousIntervalEnd, PreviousOffsetMinutes
+		SELECT MapType, TimeZoneChecksum, @PaddedStartDate, PreviousIntervalEnd, PreviousOffsetMinutes
 		FROM (
-			SELECT MapType, TimeZoneName, PreviousIntervalEnd, PreviousOffsetMinutes,
-			ROW_NUMBER() OVER (PARTITION BY MapType, TimeZoneName ORDER BY IntervalStart) RN
+			SELECT MapType, TimeZoneChecksum, PreviousIntervalEnd, PreviousOffsetMinutes,
+			ROW_NUMBER() OVER (PARTITION BY MapType, TimeZoneChecksum ORDER BY IntervalStart) RN
 			FROM #IntervalGroups
 		) q
 		WHERE q.RN = 1
@@ -347,23 +352,23 @@ BEGIN
 	CREATE TABLE #UTCMap (
 		MapType TINYINT NOT NULL,
 		RelativeYearBucket SMALLINT NOT NULL, -- can be local or UTC
-		TimeZoneName SYSNAME NOT NULL,	
-		UTCIntervalStart DATETIME2(0) NOT NULL,
-		UTCIntervalEnd DATETIME2(0) NOT NULL,
+		TimeZoneChecksum INT NOT NULL,	
+		UTCIntervalStart DATETIME2(7) NOT NULL,
+		UTCIntervalEnd DATETIME2(7) NOT NULL,
 		-- these four are only set for target -> UTC
-		LocalIntervalStart DATETIME2(0) NULL,
-		LocalIntervalEnd DATETIME2(0) NULL,
+		LocalIntervalStart DATETIME2(7) NULL,
+		LocalIntervalEnd DATETIME2(7) NULL,
 		UTCYearBucketStart SMALLINT NULL,
 		UTCYearBucketEnd SMALLINT NULL,		
 		OffsetMinutes INT NOT NULL, -- always set
 		INDEX CI CLUSTERED (MapType, RelativeYearBucket)
 	);
 
-	INSERT INTO #UTCMap (MapType, TimeZoneName, RelativeYearBucket, UTCIntervalStart, UTCIntervalEnd, 
+	INSERT INTO #UTCMap (MapType, TimeZoneChecksum, RelativeYearBucket, UTCIntervalStart, UTCIntervalEnd, 
 	LocalIntervalStart, LocalIntervalEnd, UTCYearBucketStart, UTCYearBucketEnd,	OffsetMinutes)
 	SELECT 
 		MapType,
-		TimeZoneName,
+		TimeZoneChecksum,
 		YearBucket,
 		CASE WHEN MapType = 0 THEN IntervalStart ELSE ca.UTCIntervalStart END UTCIntervalStart,
 		CASE WHEN MapType = 0 THEN IntervalEnd ELSE ca.UTCIntervalEnd END UTCIntervalStart,
@@ -376,7 +381,7 @@ BEGIN
 	(
 		SELECT
 			MapType,
-			TimeZoneName,
+			TimeZoneChecksum,
 			DATEPART(YEAR, FixedIntervals.IntervalStart) YearBucket,
 			FixedIntervals.IntervalStart,
 			FixedIntervals.IntervalEnd,
@@ -405,7 +410,7 @@ BEGIN
 
 		SELECT
 			1,
-			tz.TimeZoneName,
+			tz.TimeZoneChecksum,
 			DATEPART(YEAR, y.DateTruncatedToYear),
 			y.DateTruncatedToYear,
 			DATEADD(YEAR, 1, y.DateTruncatedToYear),
@@ -415,18 +420,19 @@ BEGIN
 	) q
 	OUTER APPLY (
 		SELECT		
-			DATEPART(YEAR, CAST(SWITCHOFFSET(IntervalStart AT TIME ZONE TimeZoneName, 0) AS DATETIME2(0))) UTCYearBucketStart,
-			DATEPART(YEAR, CAST(SWITCHOFFSET(IntervalEnd AT TIME ZONE TimeZoneName, 0) AS DATETIME2(0))) UTCYearBucketEnd,
-			SWITCHOFFSET(IntervalStart AT TIME ZONE TimeZoneName, 0) UTCIntervalStart,
-			SWITCHOFFSET(IntervalEnd AT TIME ZONE TimeZoneName, 0) UTCIntervalEnd
-		WHERE MapType = 1
+			DATEPART(YEAR, CAST(SWITCHOFFSET(IntervalStart AT TIME ZONE tz.TimeZoneName, 0) AS DATETIME2(7))) UTCYearBucketStart,
+			DATEPART(YEAR, CAST(SWITCHOFFSET(IntervalEnd AT TIME ZONE tz.TimeZoneName, 0) AS DATETIME2(7))) UTCYearBucketEnd,
+			SWITCHOFFSET(IntervalStart AT TIME ZONE tz.TimeZoneName, 0) UTCIntervalStart,
+			SWITCHOFFSET(IntervalEnd AT TIME ZONE tz.TimeZoneName, 0) UTCIntervalEnd
+		FROM #TimeZones tz
+		WHERE q.TimeZoneChecksum = tz.TimeZoneChecksum AND MapType = 1
 	) ca
 
 	UNION ALL
 
 	SELECT
 		0,
-		tz.TimeZoneName,
+		tz.TimeZoneChecksum,
 		DATEPART(YEAR, y.DateTruncatedToYear),
 		y.DateTruncatedToYear,
 		DATEADD(YEAR, 1, y.DateTruncatedToYear),
@@ -440,23 +446,28 @@ BEGIN
 	OPTION (MAXDOP 1);
 	 	
 
+	-- TODO: are interval ends for end of 2023 being cutoff?
+
 	DECLARE @Zero INT = 0;
 
-	INSERT INTO TimeZoneConversionHelper_TEMP (SourceTimeZoneName, TargetTimeZoneName, YearBucket, IntervalStart, IntervalEnd, OffsetMinutes, TargetOffsetMinutes)
+	INSERT INTO TimeZoneConversionHelper_CCI_For_Switch WITH (TABLOCKX)
+	([SourceTimeZoneNameChecksum], [TargetTimeZoneNameChecksum], YearBucket, IntervalStart, IntervalEnd, OffsetMinutes, TargetOffsetMinutes, SourceTimeZoneName, TargetTimeZoneName)
 	SELECT
-		s.TimeZoneName,
-		u.TargetTimeZoneName, 
+		s.TimeZoneChecksum,
+		u.TargetTimeZoneChecksum, 
 		s.RelativeYearBucket,
 		CASE WHEN u.UTCIntervalStart > s.UTCIntervalStart THEN DATEADD(MINUTE, DATEDIFF(MINUTE, s.UTCIntervalStart, u.UTCIntervalStart), s.LocalIntervalStart)
 		ELSE s.LocalIntervalStart END IntervalStart,
 		CASE WHEN u.UTCIntervalEnd < s.UTCIntervalEnd THEN DATEADD(MINUTE, DATEDIFF(MINUTE, s.UTCIntervalStart, u.UTCIntervalEnd), s.LocalIntervalStart)
 		ELSE s.LocalIntervalEnd END IntervalStart,
 		s.OffsetMinutes + u.OffsetMinutes OffsetMinutes,
-		u.OffsetMinutes
+		u.OffsetMinutes,
+		stz.TimeZoneName,
+		ttz.TimeZoneName
 	FROM #UTCMap s
 	CROSS APPLY (
 		SELECT
-			t.TimeZoneName AS TargetTimeZoneName,
+			t.TimeZoneChecksum AS TargetTimeZoneChecksum,
 			t.UTCIntervalStart,
 			t.UTCIntervalEnd,
 			t.OffsetMinutes
@@ -467,20 +478,24 @@ BEGIN
 		AND s.UTCIntervalStart < t.UTCIntervalEnd
 		AND s.UTCIntervalEnd > t.UTCIntervalStart
 	) u
+	INNER JOIN #TimeZones stz ON s.TimeZoneChecksum = stz.TimeZoneChecksum
+	INNER JOIN #TimeZones ttz ON u.TargetTimeZoneChecksum = ttz.TimeZoneChecksum
 	WHERE s.MapType = 1
 	AND s.RelativeYearBucket NOT IN(@RequestedStartYear - 1, @RequestedEndYear + 1) -- avoid errors for out of bounds data
 
-	UNION ALL
+	--UNION ALL
 
-	-- this part returns 0 rows but tricks the optimizer into getting a better cardinality estimate to hopefully avoid a spilled sort
+	---- this part returns 0 rows but tricks the optimizer into getting a better cardinality estimate to avoid various problems
 	SELECT
-		tz.TimeZoneName,
-		tz2.TimeZoneName,
+		tz.TimeZoneChecksum,
+		tz2.TimeZoneChecksum,
 		DATEPART(YEAR, y.DateTruncatedToYear),
 		y.DateTruncatedToYear,
 		DATEADD(YEAR, 1, y.DateTruncatedToYear),
 		0,
-		0
+		0,
+		N'',
+		N''
 	FROM (VALUES (1), (1), (1), (1)) n(n)
 	CROSS JOIN #TimeZones tz
 	CROSS JOIN #TimeZones tz2
@@ -488,18 +503,83 @@ BEGIN
 	WHERE @Zero = 1
 	OPTION (MAXDOP 1, OPTIMIZE FOR (@Zero = 1));
 
+
+	DROP TABLE IF EXISTS [TimeZoneConversionHelper_RS_For_Switch];
+	CREATE TABLE [dbo].[TimeZoneConversionHelper_RS_For_Switch](
+		[SourceTimeZoneNameChecksum] INT NOT NULL,
+		[TargetTimeZoneNameChecksum] INT NOT NULL,
+		[IntervalStart] [datetime2](7) NOT NULL,
+		[IntervalEnd] [datetime2](7) NOT NULL,
+		[OffsetMinutes] [int] NOT NULL,
+		[TargetOffsetMinutes] [int] NOT NULL,
+		CONSTRAINT PK_TimeZoneConversionHelper_RS_For_Switch PRIMARY KEY ([SourceTimeZoneNameChecksum], [TargetTimeZoneNameChecksum], [IntervalStart] )
+	);
+
+	INSERT INTO [dbo].[TimeZoneConversionHelper_RS_For_Switch] WITH (TABLOCKX)
+	(SourceTimeZoneNameChecksum, TargetTimeZoneNameChecksum, IntervalStart, IntervalEnd, OffsetMinutes, TargetOffsetMinutes)
+	SELECT
+		q2.SourceTimeZoneNameChecksum,
+		TargetTimeZoneNameChecksum,
+		MIN(IntervalStart),
+		MAX(IntervalEnd),
+		MIN(OffsetMinutes), -- ANY
+		MIN(TargetOffsetMinutes)  -- ANY
+	FROM
+	(
+		SELECT
+			q.SourceTimeZoneNameChecksum,
+			TargetTimeZoneNameChecksum,
+			IntervalStart,
+			IntervalEnd,
+			OffsetMinutes,
+			TargetOffsetMinutes,
+			SUM(CASE WHEN IntervalStart <> PrevIntervalEnd OR OffsetMinutes <> PrevOffsetMinutes OR TargetOffsetMinutes <> PrevTargetOffsetMinutes THEN 1 ELSE 0 END) 
+			OVER (PARTITION BY SourceTimeZoneNameChecksum, TargetTimeZoneNameChecksum ORDER BY IntervalStart ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) OffsetInterval
+		FROM
+		(
+			SELECT
+				SourceTimeZoneNameChecksum,
+				TargetTimeZoneNameChecksum,
+				IntervalStart,
+				IntervalEnd,
+				OffsetMinutes,
+				TargetOffsetMinutes,
+				LAG(IntervalEnd) OVER (PARTITION BY SourceTimeZoneNameChecksum, TargetTimeZoneNameChecksum ORDER BY IntervalStart) PrevIntervalEnd,
+				LAG(OffsetMinutes) OVER (PARTITION BY SourceTimeZoneNameChecksum, TargetTimeZoneNameChecksum ORDER BY IntervalStart) PrevOffsetMinutes,
+				LAG(TargetOffsetMinutes) OVER (PARTITION BY SourceTimeZoneNameChecksum, TargetTimeZoneNameChecksum ORDER BY IntervalStart) PrevTargetOffsetMinutes
+			FROM TimeZoneConversionHelper_CCI_For_Switch
+		) q
+	) q2
+	GROUP BY q2.SourceTimeZoneNameChecksum, q2.TargetTimeZoneNameChecksum, q2.OffsetInterval
+	OPTION (MAXDOP 1);
+
+
 	BEGIN TRANSACTION;
 
-	TRUNCATE TABLE dbo.TimeZoneConversionHelper;
-
-	ALTER TABLE dbo.TimeZoneConversionHelper_TEMP SWITCH TO dbo.TimeZoneConversionHelper;
+	TRUNCATE TABLE dbo.TimeZoneConversionHelper_CCI;
+	ALTER TABLE dbo.TimeZoneConversionHelper_CCI_For_Switch SWITCH TO dbo.TimeZoneConversionHelper_CCI;
 
 	COMMIT TRANSACTION;
 
-	DROP TABLE IF EXISTS dbo.TimeZoneConversionHelper_TEMP;
+	DROP TABLE IF EXISTS dbo.TimeZoneConversionHelper_CCI_For_Switch;
 
 	-- switch does not change the statistics modified row count
-	UPDATE STATISTICS TimeZoneConversionHelper;
+	UPDATE STATISTICS TimeZoneConversionHelper_CCI;
+
+
+	BEGIN TRANSACTION;
+
+	TRUNCATE TABLE dbo.TimeZoneConversionHelper_RS;
+	ALTER TABLE dbo.TimeZoneConversionHelper_RS_For_Switch SWITCH TO dbo.TimeZoneConversionHelper_RS;
+
+	COMMIT TRANSACTION;
+
+	DROP TABLE IF EXISTS dbo.TimeZoneConversionHelper_RS_For_Switch;
+
+	-- switch does not change the statistics modified row count
+	UPDATE STATISTICS TimeZoneConversionHelper_RS;
 
 	RETURN;
+
+	-- TODO: test offset->DT to make sure perf isn't terrible
 END;
