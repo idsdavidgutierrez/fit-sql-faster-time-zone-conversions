@@ -55,12 +55,29 @@ BEGIN
 		SET @RequestedStartYear = ISNULL(DATEPART(YEAR, @FixedStartDate), DATEPART(YEAR, GETDATE()) - @RangeYearsBack);
 		SET @RequestedEndYear = DATEPART(YEAR, GETDATE()) + @RangeYearsForward;
 		SET @PaddedStartDate = DATEADD(HOUR, -24, CAST(ISNULL(@FixedStartDate, DATEFROMPARTS(@RequestedStartYear, 1, 1)) AS DATETIME2));
-		SET @PaddedEndDate = DATEADD(HOUR, 24, CAST(DATEFROMPARTS(@RequestedEndYear, 12, 31) AS DATETIME2));
+		SET @PaddedEndDate = DATEADD(HOUR, 48, CAST(DATEFROMPARTS(@RequestedEndYear, 12, 31) AS DATETIME2));
 		SET @SamplePointsNeeded = CEILING(1.0 * DATEDIFF(HOUR, @PaddedStartDate, @PaddedEndDate) / @SampleHours);
 	END TRY
 	BEGIN CATCH
 		THROW;
 	END CATCH;
+
+	-- as of 2022/11/04 there are no collisions in the catalog view for any collation)
+	-- this can only happen if Microsoft releases a new standard time zone name that has a hash collision with an existing one
+	IF EXISTS (
+		SELECT 1
+		FROM sys.time_zone_info
+		GROUP BY CHECKSUM([name] COLLATE Latin1_General_100_BIN2)
+		HAVING COUNT_BIG(*) > 1
+	)
+	BEGIN
+		THROW 1569173,
+N'The helper tables cannot be refreshed due to a checksum collision.
+Please open an issue at https://github.com/idsdavidgutierrez/fit-sql-faster-time-zone-conversions.
+As a workaround, you could update the TZConvert* functions to return FallBackDTO for the new time zone that is causing the issue.
+You could also update the TZGetOffset* functions to filter by TimeZoneName instead of by TimeZoneNameChecksum.', 5;
+	END;
+	
 
 	-- use @TimeZoneFilter if it has at least one row, otherwise get all time zones
 	CREATE TABLE #TimeZones (TimeZoneName SYSNAME NOT NULL, TimeZoneChecksum INT NOT NULL, PRIMARY KEY (TimeZoneChecksum)); 
@@ -81,11 +98,6 @@ BEGIN
 		SELECT [name], CHECKSUM([name] COLLATE Latin1_General_100_BIN2)
 		FROM sys.time_zone_info;
 	END;
-
-	-- TODO: get checksums for ALL time zones in catalog view
-	-- TODO: if there's a collision, get previously mapped zones from CCI and don't process the colliding ones
-	-- TODO: throw an error message at the very end with bad time zones and instructions for work arounds
-
 
 
 	-- Used later for partition switching so must match TimeZoneConversionHelper_CCI exactly
@@ -155,7 +167,12 @@ BEGIN
 
 	SELECT DATEFROMPARTS(@RequestedEndYear + 1, 1, 1)
 
+	UNION 
+
+	SELECT DATEFROMPARTS(@RequestedStartYear - 1, 1, 1)
+
 	OPTION (MAXDOP 1);
+
 
 	-- deal with AT TIME ZONE bug that rarely happens for some time zones around the start of the year
 	WITH n49 AS (
@@ -323,7 +340,6 @@ BEGIN
 		PRIMARY KEY (MapType, TimeZoneChecksum, IntervalStart)
 	);
 
-
 	INSERT INTO #UTCMapNoBucket (MapType, TimeZoneChecksum, IntervalStart, IntervalEnd, OffsetMinutes)
 	SELECT src.MapType, src.TimeZoneChecksum, src.IntervalStart, src.IntervalEnd, src.OffsetMinutes
 	FROM (
@@ -412,8 +428,8 @@ BEGIN
 			1,
 			tz.TimeZoneChecksum,
 			DATEPART(YEAR, y.DateTruncatedToYear),
-			y.DateTruncatedToYear,
-			DATEADD(YEAR, 1, y.DateTruncatedToYear),
+			CASE WHEN y.DateTruncatedToYear > @PaddedStartDate THEN y.DateTruncatedToYear ELSE @PaddedStartDate END,
+			CASE WHEN DATEPART(YEAR, y.DateTruncatedToYear) <= @RequestedEndYear THEN DATEADD(YEAR, 1, y.DateTruncatedToYear) ELSE @PaddedEndDate END,
 			-1 * tz.OffsetMinutesFromUTC -- reverse for target -> UTC
 		FROM #TimeZonesWithConstantOffsetToUTC tz
 		CROSS JOIN #AllCalendarYears y
@@ -434,8 +450,8 @@ BEGIN
 		0,
 		tz.TimeZoneChecksum,
 		DATEPART(YEAR, y.DateTruncatedToYear),
-		y.DateTruncatedToYear,
-		DATEADD(YEAR, 1, y.DateTruncatedToYear),
+		CASE WHEN y.DateTruncatedToYear > @PaddedStartDate THEN y.DateTruncatedToYear ELSE @PaddedStartDate END,
+		CASE WHEN DATEPART(YEAR, y.DateTruncatedToYear) <= @RequestedEndYear THEN DATEADD(YEAR, 1, y.DateTruncatedToYear) ELSE @PaddedEndDate END,
 		NULL,
 		NULL,
 		NULL,
@@ -444,9 +460,7 @@ BEGIN
 	FROM #TimeZonesWithConstantOffsetToUTC tz
 	CROSS JOIN #AllCalendarYears y
 	OPTION (MAXDOP 1);
-	 	
 
-	-- TODO: are interval ends for end of 2023 being cutoff?
 
 	DECLARE @Zero INT = 0;
 
@@ -456,10 +470,10 @@ BEGIN
 		s.TimeZoneChecksum,
 		u.TargetTimeZoneChecksum, 
 		s.RelativeYearBucket,
-		CASE WHEN u.UTCIntervalStart > s.UTCIntervalStart THEN DATEADD(MINUTE, DATEDIFF(MINUTE, s.UTCIntervalStart, u.UTCIntervalStart), s.LocalIntervalStart)
-		ELSE s.LocalIntervalStart END IntervalStart,
-		CASE WHEN u.UTCIntervalEnd < s.UTCIntervalEnd THEN DATEADD(MINUTE, DATEDIFF(MINUTE, s.UTCIntervalStart, u.UTCIntervalEnd), s.LocalIntervalStart)
-		ELSE s.LocalIntervalEnd END IntervalStart,
+		CASE WHEN s.UTCIntervalStart > u.UTCIntervalStart THEN s.LocalIntervalStart
+		ELSE DATEADD(MINUTE, -1 * s.OffsetMinutes, u.UTCIntervalStart) END IntervalStart,
+		CASE WHEN s.UTCIntervalEnd < u.UTCIntervalEnd THEN s.LocalIntervalEnd
+		ELSE DATEADD(MINUTE, -1 * s.OffsetMinutes, u.UTCIntervalEnd) END IntervalEnd,
 		s.OffsetMinutes + u.OffsetMinutes OffsetMinutes,
 		u.OffsetMinutes,
 		stz.TimeZoneName,
@@ -483,9 +497,9 @@ BEGIN
 	WHERE s.MapType = 1
 	AND s.RelativeYearBucket NOT IN(@RequestedStartYear - 1, @RequestedEndYear + 1) -- avoid errors for out of bounds data
 
-	--UNION ALL
+	UNION ALL
 
-	---- this part returns 0 rows but tricks the optimizer into getting a better cardinality estimate to avoid various problems
+	-- this part returns 0 rows but tricks the optimizer into getting a better cardinality estimate to avoid various problems
 	SELECT
 		tz.TimeZoneChecksum,
 		tz2.TimeZoneChecksum,
@@ -580,6 +594,4 @@ BEGIN
 	UPDATE STATISTICS TimeZoneConversionHelper_RS;
 
 	RETURN;
-
-	-- TODO: test offset->DT to make sure perf isn't terrible
 END;
