@@ -1,6 +1,6 @@
 # Introduction
 
-Microsoft introduced the [`AT TIME ZONE`](https://learn.microsoft.com/en-us/sql/t-sql/queries/at-time-zone-transact-sql?view=sql-server-ver16) operator with the SQL Server 2016 release. That operator may be a performance bottleneck for queries which need to perform many time zone calculations. This repository contains table-valued functions that serve as a replacement for `AT TIME ZONE`. The replacement functions perform 3-10X better than `AT TIME ZONE` under typical conditions.
+Microsoft introduced the [`AT TIME ZONE`](https://learn.microsoft.com/en-us/sql/t-sql/queries/at-time-zone-transact-sql?view=sql-server-ver16) operator with the SQL Server 2016 release. That operator may be a performance bottleneck for queries which need to perform many time zone calculations. This repository contains table-valued functions that serve as a replacement for `AT TIME ZONE`. The replacement functions perform 3-20X better than `AT TIME ZONE` under typical conditions.
 
 # Simple Benchmark Results
 
