@@ -26,8 +26,8 @@ RETURN (
 		FROM (
 			SELECT TOP (1) OffsetMinutes, IntervalEnd, TargetOffsetMinutes
 			FROM dbo.TimeZoneConversionHelper_RS l
-			WHERE l.SourceTimeZoneNameChecksum = CHECKSUM(@SourceTimeZoneName COLLATE Latin1_General_100_BIN2)
-			AND l.TargetTimeZoneNameChecksum = CHECKSUM(@TargetTimeZoneName COLLATE Latin1_General_100_BIN2)
+			WHERE l.SourceTimeZoneNameChecksum = CHECKSUM(UPPER(@SourceTimeZoneName) COLLATE Latin1_General_100_BIN2)
+			AND l.TargetTimeZoneNameChecksum = CHECKSUM(UPPER(@TargetTimeZoneName) COLLATE Latin1_General_100_BIN2)
 			AND l.IntervalStart <= CAST(@Input AS DATETIME2(7))
 			ORDER BY l.IntervalStart DESC
 		) q0
@@ -89,8 +89,8 @@ RETURN (
 		FROM (
 			SELECT TOP (1) OffsetMinutes, IntervalEnd, TargetOffsetMinutes
 			FROM dbo.TimeZoneConversionHelper_RS l
-			WHERE l.SourceTimeZoneNameChecksum = CHECKSUM(@SourceTimeZoneName COLLATE Latin1_General_100_BIN2)
-			AND l.TargetTimeZoneNameChecksum = CHECKSUM(@TargetTimeZoneName COLLATE Latin1_General_100_BIN2)
+			WHERE l.SourceTimeZoneNameChecksum = CHECKSUM(UPPER(@SourceTimeZoneName) COLLATE Latin1_General_100_BIN2)
+			AND l.TargetTimeZoneNameChecksum = CHECKSUM(UPPER(@TargetTimeZoneName) COLLATE Latin1_General_100_BIN2)
 			AND l.IntervalStart <= @Input
 			ORDER BY l.IntervalStart DESC
 		) q0
@@ -151,8 +151,8 @@ RETURN (
 		FROM (
 			SELECT TOP (1) OffsetMinutes, IntervalEnd, TargetOffsetMinutes
 			FROM dbo.TimeZoneConversionHelper_RS l
-			WHERE l.SourceTimeZoneNameChecksum = CHECKSUM(N'UTC' COLLATE Latin1_General_100_BIN2)
-			AND l.TargetTimeZoneNameChecksum = CHECKSUM(@TargetTimeZoneName COLLATE Latin1_General_100_BIN2)
+			WHERE l.SourceTimeZoneNameChecksum = CHECKSUM(UPPER(N'UTC') COLLATE Latin1_General_100_BIN2)
+			AND l.TargetTimeZoneNameChecksum = CHECKSUM(UPPER(@TargetTimeZoneName) COLLATE Latin1_General_100_BIN2)
 			AND l.IntervalStart <= CAST(SWITCHOFFSET(@Input, 0) AS DATETIME2(7))
 			ORDER BY l.IntervalStart DESC
 		) q0
