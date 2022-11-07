@@ -62,41 +62,47 @@ BEGIN
 		THROW;
 	END CATCH;
 
-	-- as of 2022/11/04 there are no collisions in the catalog view for any collation)
-	-- this can only happen if Microsoft releases a new standard time zone name that has a hash collision with an existing one
-	IF EXISTS (
-		SELECT 1
-		FROM sys.time_zone_info
-		GROUP BY CHECKSUM([name] COLLATE Latin1_General_100_BIN2)
-		HAVING COUNT_BIG(*) > 1
-	)
-	BEGIN
-		THROW 1569173,
-N'The helper tables cannot be refreshed due to a checksum collision.
-Please open an issue at https://github.com/idsdavidgutierrez/fit-sql-faster-time-zone-conversions.
-As a workaround, you could update the TZConvert* functions to return FallBackDTO for the new time zone that is causing the issue.
-You could also update the TZGetOffset* functions to filter by TimeZoneName instead of by TimeZoneNameChecksum.', 5;
-	END;
-	
-
 	-- use @TimeZoneFilter if it has at least one row, otherwise get all time zones
 	CREATE TABLE #TimeZones (TimeZoneName SYSNAME NOT NULL, TimeZoneChecksum INT NOT NULL, PRIMARY KEY (TimeZoneChecksum)); 
 
 	IF EXISTS (SELECT 1 FROM @TimeZoneFilter)
 	BEGIN
 		INSERT INTO #TimeZones (TimeZoneName, TimeZoneChecksum)
-		SELECT TimeZoneName, CHECKSUM(TimeZoneName COLLATE Latin1_General_100_BIN2)
+		SELECT TimeZoneName, CHECKSUM(UPPER(TimeZoneName) COLLATE Latin1_General_100_BIN2)
 		FROM @TimeZoneFilter
 
 		UNION
 
-		SELECT N'UTC', CHECKSUM(N'UTC' COLLATE Latin1_General_100_BIN2);
+		SELECT N'UTC', CHECKSUM(UPPER(N'UTC') COLLATE Latin1_General_100_BIN2);
 	END
 	ELSE
 	BEGIN
 		INSERT INTO #TimeZones (TimeZoneName, TimeZoneChecksum)
-		SELECT [name], CHECKSUM([name] COLLATE Latin1_General_100_BIN2)
+		SELECT [name], CHECKSUM(UPPER([name]) COLLATE Latin1_General_100_BIN2)
 		FROM sys.time_zone_info;
+	END;
+
+
+	-- as of 2022/11/04 there are no hash collisions in the catalog view
+	-- this can only happen if Microsoft releases a new standard time zone name that has a hash collision with an existing one
+	IF EXISTS (
+		SELECT 1
+		FROM #TimeZones
+		GROUP BY TimeZoneChecksum
+		HAVING COUNT_BIG(*) > 1
+	) OR EXISTS (
+		SELECT 1
+		FROM sys.time_zone_info tz
+		INNER JOIN #TimeZones t ON tz.[name] <> t.TimeZoneName
+		AND CHECKSUM(UPPER(tz.[name]) COLLATE Latin1_General_100_BIN2) = t.TimeZoneChecksum
+	)
+	BEGIN
+		THROW 1569173,
+N'The helper tables cannot be refreshed due to a checksum collision.
+Please open an issue at https://github.com/idsdavidgutierrez/fit-sql-faster-time-zone-conversions.
+Possible workarounds include removing the colliding time zone from @TimeZoneFilter or updating the functions to exclude the colliding time zone.
+For the function-based workaround, you could update the TZConvert* functions to return FallBackDTO for the new time zone that is causing the issue.
+You could also update the TZGetOffset* functions to filter by TimeZoneName instead of by TimeZoneNameChecksum.', 5;
 	END;
 
 
@@ -239,7 +245,7 @@ You could also update the TZGetOffset* functions to filter by TimeZoneName inste
 
 	UNION ALL
 
-	SELECT CHECKSUM(N'UTC' COLLATE Latin1_General_100_BIN2), 0
+	SELECT CHECKSUM(UPPER(N'UTC') COLLATE Latin1_General_100_BIN2), 0
 	OPTION (MAXDOP 1);
 
 
