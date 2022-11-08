@@ -2,7 +2,7 @@
 
 SET NOCOUNT ON;
 
-DECLARE @PrevCPUms INT;
+DECLARE @Prev INT;
 DECLARE @StaticTimeZoneName SYSNAME;
 
 SELECT TOP (1) @StaticTimeZoneName = SourceTimeZoneName
@@ -20,10 +20,10 @@ CREATE TABLE #SourceData (
 DROP TABLE IF EXISTS #res;
 CREATE TABLE #res (
 	TestType VARCHAR(100) NOT NULL,
-	UTCToStaticCPUms INT NULL,
-	UTCToDynamicCPUms INT NULL,
-	StaticToDynamicCPUms INT NULL,
-	DynamicToDynamicCPUms INT NULL
+	UTCToStatic INT NULL,
+	UTCToDynamic INT NULL,
+	StaticToDynamic INT NULL,
+	DynamicToDynamic INT NULL
 );
 
 INSERT INTO #res (TestType)
@@ -48,111 +48,111 @@ FROM #all_tz t1
 CROSS JOIN #all_tz t2
 CROSS JOIN #all_tz t3;
 
--- UTCToStaticCPUms
+-- UTCToStatic
 
-SELECT @PrevCPUms = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
+SELECT @Prev = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
 SELECT SWITCHOFFSET(SourceDateTime, 0) AT TIME ZONE @StaticTimeZoneName
 FROM #SourceData
 OPTION (MAXDOP 1);
-UPDATE #res SET UTCToStaticCPUms = (SELECT cpu_time - @PrevCPUms FROM sys.dm_exec_requests WHERE session_id = @@SPID)
+UPDATE #res SET UTCToStatic = (SELECT cpu_time - @Prev FROM sys.dm_exec_requests WHERE session_id = @@SPID)
 WHERE TestType = 'AT TIME ZONE';
 
-SELECT @PrevCPUms = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
+SELECT @Prev = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
 SELECT c1.ConvertedDateTimeOffset
 FROM #SourceData
 CROSS APPLY dbo.TZConvertDT(SourceDateTime, N'UTC', @StaticTimeZoneName) c1
 OPTION (MAXDOP 1);
-UPDATE #res SET UTCToStaticCPUms = (SELECT cpu_time - @PrevCPUms FROM sys.dm_exec_requests WHERE session_id = @@SPID)
+UPDATE #res SET UTCToStatic = (SELECT cpu_time - @Prev FROM sys.dm_exec_requests WHERE session_id = @@SPID)
 WHERE TestType = 'SIMPLE';
 
-SELECT @PrevCPUms = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
+SELECT @Prev = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
 SELECT f1.ConvertedDateTimeOffset
 FROM #SourceData
 OUTER APPLY dbo.TZGetOffsetsDT(SourceDateTime, N'UTC', @StaticTimeZoneName) o1
 CROSS APPLY dbo.TZFormatDT(SourceDateTime, N'UTC', @StaticTimeZoneName, o1.OffsetMinutes, o1.TargetOffsetMinutes) f1
 OPTION (MAXDOP 1);
-UPDATE #res SET UTCToStaticCPUms = (SELECT cpu_time - @PrevCPUms FROM sys.dm_exec_requests WHERE session_id = @@SPID)
+UPDATE #res SET UTCToStatic = (SELECT cpu_time - @Prev FROM sys.dm_exec_requests WHERE session_id = @@SPID)
 WHERE TestType = 'PAIR';
 
 
--- UTCToDynamicCPUms
+-- UTCToDynamic
 
-SELECT @PrevCPUms = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
+SELECT @Prev = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
 SELECT SWITCHOFFSET(SourceDateTime, 0) AT TIME ZONE TargetTimeZoneName
 FROM #SourceData
 OPTION (MAXDOP 1);
-UPDATE #res SET UTCToDynamicCPUms = (SELECT cpu_time - @PrevCPUms FROM sys.dm_exec_requests WHERE session_id = @@SPID)
+UPDATE #res SET UTCToDynamic = (SELECT cpu_time - @Prev FROM sys.dm_exec_requests WHERE session_id = @@SPID)
 WHERE TestType = 'AT TIME ZONE';
 
-SELECT @PrevCPUms = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
+SELECT @Prev = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
 SELECT c1.ConvertedDateTimeOffset
 FROM #SourceData
 CROSS APPLY dbo.TZConvertDT(SourceDateTime, N'UTC', TargetTimeZoneName) c1
 OPTION (MAXDOP 1);
-UPDATE #res SET UTCToDynamicCPUms = (SELECT cpu_time - @PrevCPUms FROM sys.dm_exec_requests WHERE session_id = @@SPID)
+UPDATE #res SET UTCToDynamic = (SELECT cpu_time - @Prev FROM sys.dm_exec_requests WHERE session_id = @@SPID)
 WHERE TestType = 'SIMPLE';
 
-SELECT @PrevCPUms = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
+SELECT @Prev = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
 SELECT f1.ConvertedDateTimeOffset
 FROM #SourceData
 OUTER APPLY dbo.TZGetOffsetsDT(SourceDateTime, N'UTC', TargetTimeZoneName) o1
 CROSS APPLY dbo.TZFormatDT(SourceDateTime, N'UTC', @StaticTimeZoneName, o1.OffsetMinutes, o1.TargetOffsetMinutes) f1
 OPTION (MAXDOP 1);
-UPDATE #res SET UTCToDynamicCPUms = (SELECT cpu_time - @PrevCPUms FROM sys.dm_exec_requests WHERE session_id = @@SPID)
+UPDATE #res SET UTCToDynamic = (SELECT cpu_time - @Prev FROM sys.dm_exec_requests WHERE session_id = @@SPID)
 WHERE TestType = 'PAIR';
 
 
--- StaticToDynamicCPUms
+-- StaticToDynamic
 
-SELECT @PrevCPUms = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
+SELECT @Prev = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
 SELECT SourceDateTime AT TIME ZONE @StaticTimeZoneName AT TIME ZONE TargetTimeZoneName
 FROM #SourceData
 OPTION (MAXDOP 1);
-UPDATE #res SET StaticToDynamicCPUms = (SELECT cpu_time - @PrevCPUms FROM sys.dm_exec_requests WHERE session_id = @@SPID)
+UPDATE #res SET StaticToDynamic = (SELECT cpu_time - @Prev FROM sys.dm_exec_requests WHERE session_id = @@SPID)
 WHERE TestType = 'AT TIME ZONE';
 
-SELECT @PrevCPUms = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
+SELECT @Prev = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
 SELECT c1.ConvertedDateTimeOffset
 FROM #SourceData
 CROSS APPLY dbo.TZConvertDT(SourceDateTime, @StaticTimeZoneName, TargetTimeZoneName) c1
 OPTION (MAXDOP 1);
-UPDATE #res SET StaticToDynamicCPUms = (SELECT cpu_time - @PrevCPUms FROM sys.dm_exec_requests WHERE session_id = @@SPID)
+UPDATE #res SET StaticToDynamic = (SELECT cpu_time - @Prev FROM sys.dm_exec_requests WHERE session_id = @@SPID)
 WHERE TestType = 'SIMPLE';
 
-SELECT @PrevCPUms = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
+SELECT @Prev = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
 SELECT f1.ConvertedDateTimeOffset
 FROM #SourceData
 OUTER APPLY dbo.TZGetOffsetsDT(SourceDateTime, @StaticTimeZoneName, TargetTimeZoneName) o1
 CROSS APPLY dbo.TZFormatDT(SourceDateTime, @StaticTimeZoneName, @StaticTimeZoneName, o1.OffsetMinutes, o1.TargetOffsetMinutes) f1
 OPTION (MAXDOP 1);
-UPDATE #res SET StaticToDynamicCPUms = (SELECT cpu_time - @PrevCPUms FROM sys.dm_exec_requests WHERE session_id = @@SPID)
+UPDATE #res SET StaticToDynamic = (SELECT cpu_time - @Prev FROM sys.dm_exec_requests WHERE session_id = @@SPID)
 WHERE TestType = 'PAIR';
 
 
--- DynamicToDynamicCPUms
+-- DynamicToDynamic
 
-SELECT @PrevCPUms = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
+SELECT @Prev = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
 SELECT SourceDateTime AT TIME ZONE SourceTimeZoneName AT TIME ZONE TargetTimeZoneName
 FROM #SourceData
 OPTION (MAXDOP 1);
-UPDATE #res SET DynamicToDynamicCPUms = (SELECT cpu_time - @PrevCPUms FROM sys.dm_exec_requests WHERE session_id = @@SPID)
+UPDATE #res SET DynamicToDynamic = (SELECT cpu_time - @Prev FROM sys.dm_exec_requests WHERE session_id = @@SPID)
 WHERE TestType = 'AT TIME ZONE';
 
-SELECT @PrevCPUms = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
+SELECT @Prev = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
 SELECT c1.ConvertedDateTimeOffset
 FROM #SourceData
 CROSS APPLY dbo.TZConvertDT(SourceDateTime, SourceTimeZoneName, TargetTimeZoneName) c1
 OPTION (MAXDOP 1);
-UPDATE #res SET DynamicToDynamicCPUms = (SELECT cpu_time - @PrevCPUms FROM sys.dm_exec_requests WHERE session_id = @@SPID)
+UPDATE #res SET DynamicToDynamic = (SELECT cpu_time - @Prev FROM sys.dm_exec_requests WHERE session_id = @@SPID)
 WHERE TestType = 'SIMPLE';
 
-SELECT @PrevCPUms = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
+SELECT @Prev = cpu_time FROM sys.dm_exec_requests WHERE session_id = @@SPID;
 SELECT f1.ConvertedDateTimeOffset
 FROM #SourceData
 OUTER APPLY dbo.TZGetOffsetsDT(SourceDateTime, SourceTimeZoneName, TargetTimeZoneName) o1
 CROSS APPLY dbo.TZFormatDT(SourceDateTime, SourceTimeZoneName, @StaticTimeZoneName, o1.OffsetMinutes, o1.TargetOffsetMinutes) f1
 OPTION (MAXDOP 1);
-UPDATE #res SET DynamicToDynamicCPUms = (SELECT cpu_time - @PrevCPUms FROM sys.dm_exec_requests WHERE session_id = @@SPID)
+UPDATE #res SET DynamicToDynamic = (SELECT cpu_time - @Prev FROM sys.dm_exec_requests WHERE session_id = @@SPID)
 WHERE TestType = 'PAIR';
 
 GO
