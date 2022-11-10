@@ -1,6 +1,9 @@
 /*
 Name: dbo.RefreshTimeZoneConversionHelperTable
-Purpose: populate the dbo.TimeZoneConversionHelper table
+Purpose: Populate the dbo.TimeZoneConversionHelper table
+License: MIT
+Author: Joe Obbish
+Full Source Code: https://github.com/idsdavidgutierrez/fit-sql-faster-time-zone-conversions
 Parameters:
 	@FixedStartDate - The earliest date to load into the dbo.TimeZoneConversionHelper table.
 					  If this parameter is set then @RangeYearsBack must be NULL.	
@@ -32,22 +35,22 @@ BEGIN
 		@MergeIntervalCount INT;
 
 	IF @RangeYearsBack < 0 OR @RangeYearsForward < 0 OR @RangeYearsForward IS NULL
-	BEGIN
+	BEGIN;
 		THROW 1569173, N'You can''t do that', 1;
 	END;
 
 	IF @FixedStartDate >= GETDATE()
-	BEGIN
+	BEGIN;
 		THROW 1569173, N'The value for the @FixedStartDate parameter must be before today''s date', 2;
 	END;
 
 	IF (@FixedStartDate IS NULL AND @RangeYearsBack IS NULL) OR (@FixedStartDate IS NOT NULL AND @RangeYearsBack IS NOT NULL)
-	BEGIN
+	BEGIN;
 		THROW 1569173, N'Exactly one of the @FixedStartDate and @RangeYearsBack parameters must be NULL', 3;
 	END;
 	
 	IF EXISTS (SELECT 1 FROM @TimeZoneFilter tz WHERE NOT EXISTS (SELECT 1 FROM sys.time_zone_info tzi WHERE tz.TimeZoneName = tzi.[name]))
-	BEGIN
+	BEGIN;
 		THROW 1569173, N'All rows in the @TimeZoneFilter parameter must match a row in the sys.time_zone_info catalog view', 4;
 	END;
 	
@@ -59,50 +62,30 @@ BEGIN
 		SET @SamplePointsNeeded = CEILING(1.0 * DATEDIFF(HOUR, @PaddedStartDate, @PaddedEndDate) / @SampleHours);
 	END TRY
 	BEGIN CATCH
-		THROW;
+		THROW; -- data type conversion errors are expected for unreasonable input values
 	END CATCH;
 
 	-- use @TimeZoneFilter if it has at least one row, otherwise get all time zones
-	CREATE TABLE #TimeZones (TimeZoneName SYSNAME NOT NULL, TimeZoneChecksum INT NOT NULL, PRIMARY KEY (TimeZoneChecksum)); 
+	CREATE TABLE #TimeZones (
+		TimeZoneName SYSNAME NOT NULL,
+		PRIMARY KEY (TimeZoneName)
+	); 
 
 	IF EXISTS (SELECT 1 FROM @TimeZoneFilter)
 	BEGIN
-		INSERT INTO #TimeZones (TimeZoneName, TimeZoneChecksum)
-		SELECT TimeZoneName, CHECKSUM(UPPER(TimeZoneName) COLLATE Latin1_General_100_BIN2)
+		INSERT INTO #TimeZones (TimeZoneName)
+		SELECT TimeZoneName
 		FROM @TimeZoneFilter
 
 		UNION
 
-		SELECT N'UTC', CHECKSUM(UPPER(N'UTC') COLLATE Latin1_General_100_BIN2);
+		SELECT N'UTC';
 	END
 	ELSE
 	BEGIN
-		INSERT INTO #TimeZones (TimeZoneName, TimeZoneChecksum)
-		SELECT [name], CHECKSUM(UPPER([name]) COLLATE Latin1_General_100_BIN2)
+		INSERT INTO #TimeZones (TimeZoneName)
+		SELECT [name]
 		FROM sys.time_zone_info;
-	END;
-
-
-	-- as of 2022/11/04 there are no hash collisions in the catalog view
-	-- this can only happen if Microsoft releases a new standard time zone name that has a hash collision with an existing one
-	IF EXISTS (
-		SELECT 1
-		FROM #TimeZones
-		GROUP BY TimeZoneChecksum
-		HAVING COUNT_BIG(*) > 1
-	) OR EXISTS (
-		SELECT 1
-		FROM sys.time_zone_info tz
-		INNER JOIN #TimeZones t ON tz.[name] <> t.TimeZoneName
-		AND CHECKSUM(UPPER(tz.[name]) COLLATE Latin1_General_100_BIN2) = t.TimeZoneChecksum
-	)
-	BEGIN
-		THROW 1569173,
-N'The helper tables cannot be refreshed due to a checksum collision.
-Please open an issue at https://github.com/idsdavidgutierrez/fit-sql-faster-time-zone-conversions.
-Possible workarounds include removing the colliding time zone from @TimeZoneFilter or updating the functions to exclude the colliding time zone.
-For the function-based workaround, you could update the TZConvert* functions to return FallBackDTO for the new time zone that is causing the issue.
-You could also update the TZGetOffset* functions to filter by TimeZoneName instead of by TimeZoneNameChecksum.', 5;
 	END;
 
 
@@ -208,17 +191,17 @@ You could also update the TZGetOffset* functions to filter by TimeZoneName inste
 	-- MapType: 0 is UTC -> target, 1 is Source -> UTC
 	CREATE TABLE #SampledTimeZoneOffsets (
 		MapType TINYINT NOT NULL,
-		TimeZoneChecksum INT NOT NULL,
+		TimeZoneName SYSNAME NOT NULL,
 		SamplePoint DATETIME2(7) NOT NULL,
 		OffsetMinutes INT NOT NULL,
-		PRIMARY KEY (MapType, TimeZoneChecksum, SamplePoint)
+		PRIMARY KEY (MapType, TimeZoneName, SamplePoint)
 	);
 
 	-- must sample map type 0 first due to AT TIME ZONE bug
-	INSERT INTO #SampledTimeZoneOffsets (MapType, TimeZoneChecksum, SamplePoint, OffsetMinutes)
+	INSERT INTO #SampledTimeZoneOffsets (MapType, TimeZoneName, SamplePoint, OffsetMinutes)
 	SELECT
 		0,
-		tz.TimeZoneChecksum,
+		tz.TimeZoneName,
 		cd.SamplePoint,
 		o.OffsetMinutes
 	FROM #TimeZones tz
@@ -232,27 +215,27 @@ You could also update the TZGetOffset* functions to filter by TimeZoneName inste
 
 
 	CREATE TABLE #TimeZonesWithConstantOffsetToUTC (
-		TimeZoneChecksum INT NOT NULL,
+		TimeZoneName SYSNAME NOT NULL,
 		OffsetMinutesFromUTC INT NOT NULL,
-		PRIMARY KEY (TimeZoneChecksum)
+		PRIMARY KEY (TimeZoneName)
 	);
 	
-	INSERT INTO #TimeZonesWithConstantOffsetToUTC (TimeZoneChecksum, OffsetMinutesFromUTC)
-	SELECT TimeZoneChecksum, MIN(OffsetMinutes)
+	INSERT INTO #TimeZonesWithConstantOffsetToUTC (TimeZoneName, OffsetMinutesFromUTC)
+	SELECT TimeZoneName, MIN(OffsetMinutes)
 	FROM #SampledTimeZoneOffsets
-	GROUP BY TimeZoneChecksum
+	GROUP BY TimeZoneName
 	HAVING MIN(OffsetMinutes) = MAX(OffsetMinutes)
 
 	UNION ALL
 
-	SELECT CHECKSUM(UPPER(N'UTC') COLLATE Latin1_General_100_BIN2), 0
+	SELECT N'UTC', 0
 	OPTION (MAXDOP 1);
 
 
-	INSERT INTO #SampledTimeZoneOffsets (MapType, TimeZoneChecksum, SamplePoint, OffsetMinutes)
+	INSERT INTO #SampledTimeZoneOffsets (MapType, TimeZoneName, SamplePoint, OffsetMinutes)
 	SELECT
 		1,
-		tz.TimeZoneChecksum,
+		tz.TimeZoneName,
 		cd.SamplePoint,
 		o.OffsetMinutes
 	FROM #TimeZones tz
@@ -264,14 +247,13 @@ You could also update the TZGetOffset* functions to filter by TimeZoneName inste
 	WHERE NOT EXISTS (
 		SELECT 1
 		FROM #TimeZonesWithConstantOffsetToUTC t
-		WHERE tz.TimeZoneChecksum = t.TimeZoneChecksum
+		WHERE tz.TimeZoneName = t.TimeZoneName
 	)
 	OPTION (MAXDOP 1, NO_PERFORMANCE_SPOOL);
 
 
 	CREATE TABLE #IntervalGroups (
 		MapType TINYINT NOT NULL,
-		TimeZoneChecksum INT NOT NULL,
 		TimeZoneName SYSNAME NOT NULL,
 		PreviousIntervalEnd DATETIME2(7) NOT NULL,
 		IntervalStart DATETIME2(7) NOT NULL,
@@ -279,11 +261,10 @@ You could also update the TZGetOffset* functions to filter by TimeZoneName inste
 		OffsetMinutes INT NOT NULL
 	);
 
-	INSERT INTO #IntervalGroups (MapType, TimeZoneChecksum, TimeZoneName, PreviousIntervalEnd, IntervalStart, PreviousOffsetMinutes, OffsetMinutes)
+	INSERT INTO #IntervalGroups (MapType, TimeZoneName, PreviousIntervalEnd, IntervalStart, PreviousOffsetMinutes, OffsetMinutes)
 	SELECT
 		MapType,
-		tz.TimeZoneChecksum,
-		tz.TimeZoneName,
+		TimeZoneName,
 		PreviousSamplePoint,
 		SamplePoint,
 		PreviousOffsetMinutes,
@@ -292,20 +273,19 @@ You could also update the TZGetOffset* functions to filter by TimeZoneName inste
 	(
 		SELECT
 			MapType,
-			TimeZoneChecksum,
+			TimeZoneName,
 			cd.SamplePoint,
 			cd.OffsetMinutes,
-			LAG(SamplePoint) OVER (PARTITION BY MapType, TimeZoneChecksum ORDER BY SamplePoint) PreviousSamplePoint,
-			LAG(cd.OffsetMinutes) OVER (PARTITION BY MapType, TimeZoneChecksum ORDER BY cd.SamplePoint) PreviousOffsetMinutes
+			LAG(SamplePoint) OVER (PARTITION BY MapType, TimeZoneName ORDER BY SamplePoint) PreviousSamplePoint,
+			LAG(cd.OffsetMinutes) OVER (PARTITION BY MapType, TimeZoneName ORDER BY cd.SamplePoint) PreviousOffsetMinutes
 			FROM #SampledTimeZoneOffsets cd
 			LEFT OUTER JOIN dbo.TimeZoneConversionHelper_CCI_For_Switch z ON 1 = 0 -- allow batch mode
 			WHERE NOT EXISTS (
 				SELECT 1
 				FROM #TimeZonesWithConstantOffsetToUTC t
-				WHERE cd.TimeZoneChecksum = t.TimeZoneChecksum
+				WHERE cd.TimeZoneName = t.TimeZoneName
 			)
 		) q
-	INNER JOIN #TimeZones tz ON q.TimeZoneChecksum = tz.TimeZoneChecksum
 	WHERE q.OffsetMinutes <> PreviousOffsetMinutes
 	OPTION (MAXDOP 1);
 
@@ -339,31 +319,31 @@ You could also update the TZGetOffset* functions to filter by TimeZoneName inste
 
 	CREATE TABLE #UTCMapNoBucket (
 		MapType TINYINT NOT NULL,
-		TimeZoneChecksum INT NOT NULL,		
+		TimeZoneName SYSNAME NOT NULL,		
 		IntervalStart DATETIME2(7) NOT NULL,
 		IntervalEnd DATETIME2(7) NOT NULL,
 		OffsetMinutes INT NOT NULL,
-		PRIMARY KEY (MapType, TimeZoneChecksum, IntervalStart)
+		PRIMARY KEY (MapType, TimeZoneName, IntervalStart)
 	);
 
-	INSERT INTO #UTCMapNoBucket (MapType, TimeZoneChecksum, IntervalStart, IntervalEnd, OffsetMinutes)
-	SELECT src.MapType, src.TimeZoneChecksum, src.IntervalStart, src.IntervalEnd, src.OffsetMinutes
+	INSERT INTO #UTCMapNoBucket (MapType, TimeZoneName, IntervalStart, IntervalEnd, OffsetMinutes)
+	SELECT src.MapType, src.TimeZoneName, src.IntervalStart, src.IntervalEnd, src.OffsetMinutes
 	FROM (
 		SELECT
 			MapType,
-			TimeZoneChecksum,
+			TimeZoneName,
 			i.IntervalStart,
-			ISNULL(LEAD(PreviousIntervalEnd) OVER (PARTITION BY MapType, TimeZoneChecksum ORDER BY i.IntervalStart), @PaddedEndDate) IntervalEnd,		
+			ISNULL(LEAD(PreviousIntervalEnd) OVER (PARTITION BY MapType, TimeZoneName ORDER BY i.IntervalStart), @PaddedEndDate) IntervalEnd,		
 			i.OffsetMinutes
 		FROM #IntervalGroups i
 		LEFT OUTER JOIN dbo.TimeZoneConversionHelper_CCI_For_Switch z ON 1 = 0 -- allow batch mode
 
 		UNION ALL
 
-		SELECT MapType, TimeZoneChecksum, @PaddedStartDate, PreviousIntervalEnd, PreviousOffsetMinutes
+		SELECT MapType, TimeZoneName, @PaddedStartDate, PreviousIntervalEnd, PreviousOffsetMinutes
 		FROM (
-			SELECT MapType, TimeZoneChecksum, PreviousIntervalEnd, PreviousOffsetMinutes,
-			ROW_NUMBER() OVER (PARTITION BY MapType, TimeZoneChecksum ORDER BY IntervalStart) RN
+			SELECT MapType, TimeZoneName, PreviousIntervalEnd, PreviousOffsetMinutes,
+			ROW_NUMBER() OVER (PARTITION BY MapType, TimeZoneName ORDER BY IntervalStart) RN
 			FROM #IntervalGroups
 		) q
 		WHERE q.RN = 1
@@ -371,10 +351,45 @@ You could also update the TZGetOffset* functions to filter by TimeZoneName inste
 	OPTION (MAXDOP 1);
 
 
+	CREATE TABLE #AllChecksums (
+		TimeZoneName SYSNAME NOT NULL,
+		TimeZoneNameChecksum INT NOT NULL,
+		PRIMARY KEY (TimeZoneName)
+	);
+
+	INSERT INTO #AllChecksums (TimeZoneName, TimeZoneNameChecksum)
+	SELECT tz.[name], CHECKSUM(UPPER(tz.[name]) COLLATE Latin1_General_100_BIN2) 
+	FROM sys.time_zone_info tz
+	OPTION (MAXDOP 1);
+
+	-- debug code to force errors
+	-- UPDATE #AllChecksums SET TimeZoneNameChecksum = -449377864 WHERE TimeZoneName = N'UTC-11';
+
+	-- as of October 2022 there are no checksum collusions
+	-- it is theoretically possible, although very unlikely, that Microsoft could add a new time zone that causes a collision
+	-- this code handles that scenario
+	DECLARE @DisallowedTimeZones TABLE (
+		TimeZoneName SYSNAME NOT NULL,
+		PRIMARY KEY (TimeZoneName)
+	);
+
+	INSERT INTO @DisallowedTimeZones (TimeZoneName)
+	SELECT ac.TimeZoneName
+	FROM #AllChecksums ac
+	WHERE ac.TimeZoneNameChecksum IN (
+		SELECT TimeZoneNameChecksum
+		FROM #AllChecksums
+		GROUP BY TimeZoneNameChecksum
+		HAVING COUNT_BIG(*) > 1
+	)
+	OPTION (MAXDOP 1);
+
+
 	CREATE TABLE #UTCMap (
 		MapType TINYINT NOT NULL,
 		RelativeYearBucket SMALLINT NOT NULL, -- can be local or UTC
-		TimeZoneChecksum INT NOT NULL,	
+		TimeZoneName SYSNAME NOT NULL,
+		TimeZoneNameChecksum INT NOT NULL,
 		UTCIntervalStart DATETIME2(7) NOT NULL,
 		UTCIntervalEnd DATETIME2(7) NOT NULL,
 		-- these four are only set for target -> UTC
@@ -386,11 +401,12 @@ You could also update the TZGetOffset* functions to filter by TimeZoneName inste
 		INDEX CI CLUSTERED (MapType, RelativeYearBucket)
 	);
 
-	INSERT INTO #UTCMap (MapType, TimeZoneChecksum, RelativeYearBucket, UTCIntervalStart, UTCIntervalEnd, 
+	INSERT INTO #UTCMap (MapType, TimeZoneName, TimeZoneNameChecksum, RelativeYearBucket, UTCIntervalStart, UTCIntervalEnd, 
 	LocalIntervalStart, LocalIntervalEnd, UTCYearBucketStart, UTCYearBucketEnd,	OffsetMinutes)
 	SELECT 
 		MapType,
-		TimeZoneChecksum,
+		q.TimeZoneName,
+		ac.TimeZoneNameChecksum,
 		YearBucket,
 		CASE WHEN MapType = 0 THEN IntervalStart ELSE ca.UTCIntervalStart END UTCIntervalStart,
 		CASE WHEN MapType = 0 THEN IntervalEnd ELSE ca.UTCIntervalEnd END UTCIntervalStart,
@@ -403,7 +419,7 @@ You could also update the TZGetOffset* functions to filter by TimeZoneName inste
 	(
 		SELECT
 			MapType,
-			TimeZoneChecksum,
+			TimeZoneName,
 			DATEPART(YEAR, FixedIntervals.IntervalStart) YearBucket,
 			FixedIntervals.IntervalStart,
 			FixedIntervals.IntervalEnd,
@@ -432,7 +448,7 @@ You could also update the TZGetOffset* functions to filter by TimeZoneName inste
 
 		SELECT
 			1,
-			tz.TimeZoneChecksum,
+			tz.TimeZoneName,
 			DATEPART(YEAR, y.DateTruncatedToYear),
 			CASE WHEN y.DateTruncatedToYear > @PaddedStartDate THEN y.DateTruncatedToYear ELSE @PaddedStartDate END,
 			CASE WHEN DATEPART(YEAR, y.DateTruncatedToYear) <= @RequestedEndYear THEN DATEADD(YEAR, 1, y.DateTruncatedToYear) ELSE @PaddedEndDate END,
@@ -442,19 +458,20 @@ You could also update the TZGetOffset* functions to filter by TimeZoneName inste
 	) q
 	OUTER APPLY (
 		SELECT		
-			DATEPART(YEAR, CAST(SWITCHOFFSET(IntervalStart AT TIME ZONE tz.TimeZoneName, 0) AS DATETIME2(7))) UTCYearBucketStart,
-			DATEPART(YEAR, CAST(SWITCHOFFSET(IntervalEnd AT TIME ZONE tz.TimeZoneName, 0) AS DATETIME2(7))) UTCYearBucketEnd,
-			SWITCHOFFSET(IntervalStart AT TIME ZONE tz.TimeZoneName, 0) UTCIntervalStart,
-			SWITCHOFFSET(IntervalEnd AT TIME ZONE tz.TimeZoneName, 0) UTCIntervalEnd
-		FROM #TimeZones tz
-		WHERE q.TimeZoneChecksum = tz.TimeZoneChecksum AND MapType = 1
+			DATEPART(YEAR, CAST(SWITCHOFFSET(IntervalStart AT TIME ZONE q.TimeZoneName, 0) AS DATETIME2(7))) UTCYearBucketStart,
+			DATEPART(YEAR, CAST(SWITCHOFFSET(IntervalEnd AT TIME ZONE q.TimeZoneName, 0) AS DATETIME2(7))) UTCYearBucketEnd,
+			SWITCHOFFSET(IntervalStart AT TIME ZONE q.TimeZoneName, 0) UTCIntervalStart,
+			SWITCHOFFSET(IntervalEnd AT TIME ZONE q.TimeZoneName, 0) UTCIntervalEnd
+		WHERE MapType = 1
 	) ca
+	LEFT OUTER JOIN #AllChecksums ac ON q.TimeZoneName = ac.TimeZoneName
 
 	UNION ALL
 
 	SELECT
 		0,
-		tz.TimeZoneChecksum,
+		tz.TimeZoneName,
+		ac.TimeZoneNameChecksum,
 		DATEPART(YEAR, y.DateTruncatedToYear),
 		CASE WHEN y.DateTruncatedToYear > @PaddedStartDate THEN y.DateTruncatedToYear ELSE @PaddedStartDate END,
 		CASE WHEN DATEPART(YEAR, y.DateTruncatedToYear) <= @RequestedEndYear THEN DATEADD(YEAR, 1, y.DateTruncatedToYear) ELSE @PaddedEndDate END,
@@ -465,29 +482,34 @@ You could also update the TZGetOffset* functions to filter by TimeZoneName inste
 		tz.OffsetMinutesFromUTC
 	FROM #TimeZonesWithConstantOffsetToUTC tz
 	CROSS JOIN #AllCalendarYears y
+	LEFT OUTER JOIN #AllChecksums ac ON tz.TimeZoneName = ac.TimeZoneName
 	OPTION (MAXDOP 1);
 
 
-	DECLARE @Zero INT = 0;
+	DELETE FROM #UTCMap
+	WHERE TimeZoneName IN (SELECT d.TimeZoneName FROM @DisallowedTimeZones d);	
+	
 
+	DECLARE @Zero INT = 0;
 	INSERT INTO TimeZoneConversionHelper_CCI_For_Switch WITH (TABLOCKX)
 	([SourceTimeZoneNameChecksum], [TargetTimeZoneNameChecksum], YearBucket, IntervalStart, IntervalEnd, OffsetMinutes, TargetOffsetMinutes, SourceTimeZoneName, TargetTimeZoneName)
 	SELECT
-		s.TimeZoneChecksum,
-		u.TargetTimeZoneChecksum, 
+		s.TimeZoneNameChecksum,
+		u.TargetTimeZoneNameChecksum,
 		s.RelativeYearBucket,
 		CASE WHEN s.UTCIntervalStart > u.UTCIntervalStart THEN s.LocalIntervalStart
 		ELSE DATEADD(MINUTE, -1 * s.OffsetMinutes, u.UTCIntervalStart) END IntervalStart,
 		CASE WHEN s.UTCIntervalEnd < u.UTCIntervalEnd THEN s.LocalIntervalEnd
 		ELSE DATEADD(MINUTE, -1 * s.OffsetMinutes, u.UTCIntervalEnd) END IntervalEnd,
 		s.OffsetMinutes + u.OffsetMinutes OffsetMinutes,
-		u.OffsetMinutes,
-		stz.TimeZoneName,
-		ttz.TimeZoneName
+		u.OffsetMinutes TargetOffsetMinutes,
+		s.TimeZoneName SourceTimeZoneName,
+		u.TargetTimeZoneName
 	FROM #UTCMap s
 	CROSS APPLY (
 		SELECT
-			t.TimeZoneChecksum AS TargetTimeZoneChecksum,
+			t.TimeZoneName AS TargetTimeZoneName,
+			t.TimeZoneNameChecksum AS TargetTimeZoneNameChecksum,
 			t.UTCIntervalStart,
 			t.UTCIntervalEnd,
 			t.OffsetMinutes
@@ -498,8 +520,6 @@ You could also update the TZGetOffset* functions to filter by TimeZoneName inste
 		AND s.UTCIntervalStart < t.UTCIntervalEnd
 		AND s.UTCIntervalEnd > t.UTCIntervalStart
 	) u
-	INNER JOIN #TimeZones stz ON s.TimeZoneChecksum = stz.TimeZoneChecksum
-	INNER JOIN #TimeZones ttz ON u.TargetTimeZoneChecksum = ttz.TimeZoneChecksum
 	WHERE s.MapType = 1
 	AND s.RelativeYearBucket NOT IN(@RequestedStartYear - 1, @RequestedEndYear + 1) -- avoid errors for out of bounds data
 
@@ -507,15 +527,15 @@ You could also update the TZGetOffset* functions to filter by TimeZoneName inste
 
 	-- this part returns 0 rows but tricks the optimizer into getting a better cardinality estimate to avoid various problems
 	SELECT
-		tz.TimeZoneChecksum,
-		tz2.TimeZoneChecksum,
+		0,
+		0,
 		DATEPART(YEAR, y.DateTruncatedToYear),
 		y.DateTruncatedToYear,
 		DATEADD(YEAR, 1, y.DateTruncatedToYear),
 		0,
 		0,
-		N'',
-		N''
+		tz.TimeZoneName,
+		tz2.TimeZoneName
 	FROM (VALUES (1), (1), (1), (1)) n(n)
 	CROSS JOIN #TimeZones tz
 	CROSS JOIN #TimeZones tz2
@@ -567,7 +587,16 @@ You could also update the TZGetOffset* functions to filter by TimeZoneName inste
 				LAG(IntervalEnd) OVER (PARTITION BY SourceTimeZoneNameChecksum, TargetTimeZoneNameChecksum ORDER BY IntervalStart) PrevIntervalEnd,
 				LAG(OffsetMinutes) OVER (PARTITION BY SourceTimeZoneNameChecksum, TargetTimeZoneNameChecksum ORDER BY IntervalStart) PrevOffsetMinutes,
 				LAG(TargetOffsetMinutes) OVER (PARTITION BY SourceTimeZoneNameChecksum, TargetTimeZoneNameChecksum ORDER BY IntervalStart) PrevTargetOffsetMinutes
-			FROM TimeZoneConversionHelper_CCI_For_Switch
+			FROM TimeZoneConversionHelper_CCI_For_Switch s
+			--WHERE NOT EXISTS (
+			--	SELECT 1
+			--	FROM @DisallowedTimeZones dtz
+			--	WHERE s.SourceTimeZoneName = dtz.TimeZoneName
+			--) AND NOT EXISTS (
+			--	SELECT 1
+			--	FROM @DisallowedTimeZones dtz
+			--	WHERE s.TargetTimeZoneName = dtz.TimeZoneName
+			--) 
 		) q
 	) q2
 	GROUP BY q2.SourceTimeZoneNameChecksum, q2.TargetTimeZoneNameChecksum, q2.OffsetInterval
@@ -598,6 +627,33 @@ You could also update the TZGetOffset* functions to filter by TimeZoneName inste
 
 	-- switch does not change the statistics modified row count
 	UPDATE STATISTICS TimeZoneConversionHelper_RS;
+
+
+	-- report error for time zone collision if needed
+	IF EXISTS (
+		SELECT TimeZoneName FROM @DisallowedTimeZones
+		INTERSECT
+		SELECT TimeZoneName FROM #TimeZones
+	)
+	BEGIN
+		DECLARE	@ErrorMessage NVARCHAR(2048);
+		DECLARE @TimeZoneNames NVARCHAR(1500) = N'';
+
+		SELECT @TimeZoneNames = @TimeZoneNames + TimeZoneName + N', '
+		FROM
+		(
+			SELECT TimeZoneName FROM @DisallowedTimeZones
+			INTERSECT
+			SELECT TimeZoneName FROM #TimeZones
+		) q;
+
+		SET @ErrorMessage = N'Some time zones could not be loaded into the TimeZoneConversionHelper_RS table due to a checksum collision.
+This issue will degrade performance for those time zones when using the TZConvert%% and TZGetOffset%% functions.
+The following time zones are affected: ' + @TimeZoneNames + N'
+Please open an issue at https://github.com/idsdavidgutierrez/fit-sql-faster-time-zone-conversions.';
+
+		THROW 1569173, @ErrorMessage, 5;	
+	END;
 
 	RETURN;
 END;
