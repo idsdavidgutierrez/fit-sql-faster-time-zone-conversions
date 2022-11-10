@@ -1,6 +1,9 @@
 /*
 Name: TZFormatDT
-Purpose: performs the equivalent of (@Input AT TIME ZONE @SourceTimeZoneName) AT TIME ZONE @TargetTimeZoneName
+Purpose: Performs the equivalent of (@Input AT TIME ZONE @SourceTimeZoneName) AT TIME ZONE @TargetTimeZoneName
+License: MIT
+Author: Joe Obbish
+Full Source Code: https://github.com/idsdavidgutierrez/fit-sql-faster-time-zone-conversions
 Parameters:
 	@Input - the datetime value to be converted
 	@SourceTimeZoneName - the source time zone of the input in Windows standard format (see sys.time_zone_info)
@@ -57,7 +60,10 @@ GO
 
 /*
 Name: TZFormatDT2
-Purpose: performs the equivalent of (@Input AT TIME ZONE @SourceTimeZoneName) AT TIME ZONE @TargetTimeZoneName
+Purpose: Performs the equivalent of (@Input AT TIME ZONE @SourceTimeZoneName) AT TIME ZONE @TargetTimeZoneName
+License: MIT
+Author: Joe Obbish
+Full Source Code: https://github.com/idsdavidgutierrez/fit-sql-faster-time-zone-conversions
 Parameters:
 	@Input - the datetime value to be converted
 	@SourceTimeZoneName - the source time zone of the input in Windows standard format (see sys.time_zone_info)
@@ -113,7 +119,10 @@ GO
 
 /*
 Name: TZFormatDTO
-Purpose: performs the equivalent of @Input AT TIME ZONE @TargetTimeZoneName
+Purpose: Performs the equivalent of @Input AT TIME ZONE @TargetTimeZoneName
+License: MIT
+Author: Joe Obbish
+Full Source Code: https://github.com/idsdavidgutierrez/fit-sql-faster-time-zone-conversions
 Parameters:
 	@Input - the datetime value to be converted
 	@TargetTimeZoneName - the target time zone of the input in Windows standard format (see sys.time_zone_info)
@@ -149,5 +158,4 @@ RETURN (
 			CAST(helper.ConvertedDTO AS DATETIME2) ConvertedDateTime2,
 			helper.ConvertedDTO ConvertedDateTimeOffset
 	) output_columns
-
 );
