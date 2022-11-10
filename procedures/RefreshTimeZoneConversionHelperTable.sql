@@ -67,7 +67,7 @@ BEGIN
 
 	-- use @TimeZoneFilter if it has at least one row, otherwise get all time zones
 	CREATE TABLE #TimeZones (
-		TimeZoneName SYSNAME NOT NULL,
+		TimeZoneName SYSNAME COLLATE database_default NOT NULL,
 		PRIMARY KEY (TimeZoneName)
 	); 
 
@@ -191,7 +191,7 @@ BEGIN
 	-- MapType: 0 is UTC -> target, 1 is Source -> UTC
 	CREATE TABLE #SampledTimeZoneOffsets (
 		MapType TINYINT NOT NULL,
-		TimeZoneName SYSNAME NOT NULL,
+		TimeZoneName SYSNAME COLLATE database_default NOT NULL,
 		SamplePoint DATETIME2(7) NOT NULL,
 		OffsetMinutes INT NOT NULL,
 		PRIMARY KEY (MapType, TimeZoneName, SamplePoint)
@@ -215,7 +215,7 @@ BEGIN
 
 
 	CREATE TABLE #TimeZonesWithConstantOffsetToUTC (
-		TimeZoneName SYSNAME NOT NULL,
+		TimeZoneName SYSNAME COLLATE database_default NOT NULL,
 		OffsetMinutesFromUTC INT NOT NULL,
 		PRIMARY KEY (TimeZoneName)
 	);
@@ -254,7 +254,7 @@ BEGIN
 
 	CREATE TABLE #IntervalGroups (
 		MapType TINYINT NOT NULL,
-		TimeZoneName SYSNAME NOT NULL,
+		TimeZoneName SYSNAME COLLATE database_default NOT NULL,
 		PreviousIntervalEnd DATETIME2(7) NOT NULL,
 		IntervalStart DATETIME2(7) NOT NULL,
 		PreviousOffsetMinutes INT NOT NULL,
@@ -319,7 +319,7 @@ BEGIN
 
 	CREATE TABLE #UTCMapNoBucket (
 		MapType TINYINT NOT NULL,
-		TimeZoneName SYSNAME NOT NULL,		
+		TimeZoneName SYSNAME COLLATE database_default NOT NULL,		
 		IntervalStart DATETIME2(7) NOT NULL,
 		IntervalEnd DATETIME2(7) NOT NULL,
 		OffsetMinutes INT NOT NULL,
@@ -352,7 +352,7 @@ BEGIN
 
 
 	CREATE TABLE #AllChecksums (
-		TimeZoneName SYSNAME NOT NULL,
+		TimeZoneName SYSNAME COLLATE database_default NOT NULL,
 		TimeZoneNameChecksum INT NOT NULL,
 		PRIMARY KEY (TimeZoneName)
 	);
@@ -369,7 +369,7 @@ BEGIN
 	-- it is theoretically possible, although very unlikely, that Microsoft could add a new time zone that causes a collision
 	-- this code handles that scenario
 	DECLARE @DisallowedTimeZones TABLE (
-		TimeZoneName SYSNAME NOT NULL,
+		TimeZoneName SYSNAME COLLATE database_default NOT NULL ,
 		PRIMARY KEY (TimeZoneName)
 	);
 
@@ -388,7 +388,7 @@ BEGIN
 	CREATE TABLE #UTCMap (
 		MapType TINYINT NOT NULL,
 		RelativeYearBucket SMALLINT NOT NULL, -- can be local or UTC
-		TimeZoneName SYSNAME NOT NULL,
+		TimeZoneName SYSNAME COLLATE database_default NOT NULL,
 		TimeZoneNameChecksum INT NOT NULL,
 		UTCIntervalStart DATETIME2(7) NOT NULL,
 		UTCIntervalEnd DATETIME2(7) NOT NULL,
@@ -657,3 +657,4 @@ Please open an issue at https://github.com/idsdavidgutierrez/fit-sql-faster-time
 
 	RETURN;
 END;
+
