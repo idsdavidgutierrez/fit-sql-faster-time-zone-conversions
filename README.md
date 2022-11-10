@@ -4,11 +4,11 @@ Microsoft introduced the [`AT TIME ZONE`](https://learn.microsoft.com/en-us/sql/
 
 # Simple Benchmark Results
 
-A simple benchmark test was done that compares different calculation methods over a table of one million rows. The measurements are in CPU milliseconds for four different cases and three different test methods. Results for SQL Server 2019 Developer Edition:
+Different calculation methods over a table of one million rows were used as a simple benchmark. The measurements are in CPU milliseconds for four different cases and three different test methods. Results for SQL Server 2019 Developer Edition:
 
 ![image](https://user-images.githubusercontent.com/33984311/200423273-90d85703-ac97-4531-b8b1-82c70f5e1dc6.png)
 
-Microsoft made performance improvements to `AT TIME ZONE` in Azure SQL Database at some point. I suspect that similar improvements are also available in SQL Server 2022 based on RC1 test results. Results for Azure SQL Database:
+Microsoft made performance improvements to `AT TIME ZONE` in Azure SQL Database at some point. I suspect that similar improvements are also available in SQL Server 2022 based on 2022 RC1 test results. Results for Azure SQL Database:
 
 ![image](https://user-images.githubusercontent.com/33984311/200423936-c1c01dfb-77af-476f-9c90-eaef338a281a.png)
 
@@ -25,7 +25,18 @@ Two different methods of calculating time zone changes are provided. The first m
 
 The simple functions perform the calculation with only one function call but they are limited to nested loop joins only. Think of a nested loop join as an algorithm that requires a small, fixed calculation cost per row for each `AT TIME ZONE` calculation that is replaced.
 
-## Function Pairs (performs better but harder to call)
+Use the function pair method method under the following conditions:
+ - You want the best performance as opposed to functions that are easier for developers to call.
+ - You are using Columnstore indexes or your queries are processing a lot of data.
+ - You are using Azure SQL Database.
+ 
+Use the simple function method method under the following conditions:
+ - You want the easiest functions for developers as opposed to the best possible performance.
+ - You aren't using Columnstore indexes.
+ - You aren't using Azure SQL Database.
+ - You want the functions to minimize overall changes to your query plans that use `AT TIME ZONE`.
+
+## Function Pairs
 
 See the Examples section for an example of how the two function types documented below work together. 
 
@@ -78,7 +89,7 @@ All three functions have the same four column result set:
 - ConvertedDateTimeOffset - the converted value as a DATETIMEOFFSET data type
 
 
-## Simple Functions (performs worse but easier to call)
+## Simple Functions
 
 Functions `TZConvertDT`, `TZConvertDT2`, and `TZConvertDTO` are provided to perform the equivalent of `(@Input AT TIME ZONE @SourceTimeZoneName) AT TIME ZONE @TargetTimeZoneName`. Each function takes a different type of input data type. These functions can be called with `OUTER APPLY` or `CROSS APPLY`.
 
@@ -154,10 +165,10 @@ Executing the code from the latest release allows steps 1 - 4 to be skipped.
 
 - The provided functions aim to reduce the CPU time required to perform time zone calculations only. If a query performance problem is caused by a poor cardinality estimate instead of a large number of `AT TIME ZONE` executions then changing to use these functions may not resolve the issue.
 - Replacing `AT TIME ZONE` with these functions is equivalent to adding a join to the query for each function call. This will increase query plan complexity and in some cases may degrade performance for very complex queries.
-- The functions work by looking for a match in the `TimeZoneConversionHelper` table. If no match is found then fallback code runs which calls the `AT TIME ZONE` operator. Query performance will improve as the percentage of matched inputs increases but the correct results should be returned even if there is no matching row in the table.
+- The functions work by looking for a match in the `TimeZoneConversionHelper` tables. If no match is found then fallback code runs which calls the `AT TIME ZONE` operator. Query performance will improve as the percentage of matched inputs increases but the correct results should be returned even if there is no matching row in the table.
 - The helper tables take up around 100 MB of space with default parameters for `RefreshTimeZoneConversionHelperTable`. The best way to reduce the size of the table is to call `RefreshTimeZoneConversionHelperTable` with the `@TimeZoneFilter` parameter set to the time zones relevant to your environment.
 - The functions aim to mimic the behavior of the `AT TIME ZONE` operator. `AT TIME ZONE` uses a Windows mechanism which does not have all historical rule changes. The functions will also not reflect all historical rule changes, mostly prior to 2003. `AT TIME ZONE` also has rare phantom offset changes that last for one hour near the beginning of some calendar years for some time zones. The functions aim to replicate that behavior as well.
 - The `RefreshTimeZoneConversionHelperTable` stored procedure uses a sampling technique that assumes that a time zone won't change its offset back and forth to the same value within any 24 hour period outside of a day before and after the start of a new year. As of October 2022, the shortest historical switch is 28 days for the Fiji Standard Time. If you feel that 24 hours is too generous of an assumption it is possible to change the value of the `@SampleHours` variable in `RefreshTimeZoneConversionHelperTable`.
-- switch notes
--- index notes
--- CHECKSUM notes
+- The `RefreshTimeZoneConversionHelperTable` stored procedure uses partition switching to load new data into the helper tables. Any customization made to the `TimeZoneConversionHelper_CCI` or `TimeZoneConversionHelper_RS` tables, such as adding an index, will likely need to be added to the `RefreshTimeZoneConversionHelperTable` stored procedure.
+- It is possible to add a nonclustered rowstore index to the `TimeZoneConversionHelper_CCI` table to allow the `TZGetOffsets%` functions to qualify for nested loops, adaptive joins, merge joins, and hash joins instead of just hash joins.
+- A `CHECKSUM` method is used to improve performance. It is possible, but extremely unlikely, that one day Microsoft will create a new time zone name that leads to a hash collision. If this happens an error will be thrown by the `RefreshTimeZoneConversionHelperTable` stored procedure. The functions will continue to work but performance will be degraded for the time zones that have hash collisions.
