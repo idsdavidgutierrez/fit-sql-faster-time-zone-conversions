@@ -6,7 +6,7 @@ Microsoft introduced the [`AT TIME ZONE`](https://learn.microsoft.com/en-us/sql/
 
 Different calculation methods over a table of one million rows were used as a simple benchmark. The measurements are in CPU milliseconds for four different cases and three different test methods. Results for SQL Server 2019 Developer Edition:
 
-![image](https://user-images.githubusercontent.com/33984311/200423273-90d85703-ac97-4531-b8b1-82c70f5e1dc6.png)
+![image](https://user-images.githubusercontent.com/33984311/201217901-c0c3e8f6-bbeb-4382-b9fa-f0e513d7a786.png)
 
 Microsoft made performance improvements to `AT TIME ZONE` in Azure SQL Database at some point. I suspect that similar improvements are also available in SQL Server 2022 based on 2022 RC1 test results. Results for Azure SQL Database:
 
