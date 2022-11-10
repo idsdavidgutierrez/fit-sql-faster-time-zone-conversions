@@ -10,8 +10,7 @@ Different calculation methods over a table of one million rows were used as a si
 
 Microsoft made performance improvements to `AT TIME ZONE` in Azure SQL Database at some point. I suspect that similar improvements are also available in SQL Server 2022 based on 2022 RC1 test results. Results for Azure SQL Database:
 
-![image](https://user-images.githubusercontent.com/33984311/200423936-c1c01dfb-77af-476f-9c90-eaef338a281a.png)
-
+![image](https://user-images.githubusercontent.com/33984311/201218027-7413d087-b792-47de-bcf3-84bfda643cc9.png)
 
 # Requirements
 
