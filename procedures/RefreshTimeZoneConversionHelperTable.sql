@@ -606,7 +606,8 @@ BEGIN
 	BEGIN TRANSACTION;
 
 	TRUNCATE TABLE dbo.TimeZoneConversionHelper_CCI;
-	ALTER TABLE dbo.TimeZoneConversionHelper_CCI_For_Switch SWITCH TO dbo.TimeZoneConversionHelper_CCI;
+	ALTER TABLE dbo.TimeZoneConversionHelper_CCI_For_Switch SWITCH TO dbo.TimeZoneConversionHelper_CCI
+	WITH (WAIT_AT_LOW_PRIORITY (MAX_DURATION = 30 MINUTES, ABORT_AFTER_WAIT = SELF));
 
 	COMMIT TRANSACTION;
 
@@ -619,7 +620,8 @@ BEGIN
 	BEGIN TRANSACTION;
 
 	TRUNCATE TABLE dbo.TimeZoneConversionHelper_RS;
-	ALTER TABLE dbo.TimeZoneConversionHelper_RS_For_Switch SWITCH TO dbo.TimeZoneConversionHelper_RS;
+	ALTER TABLE dbo.TimeZoneConversionHelper_RS_For_Switch SWITCH TO dbo.TimeZoneConversionHelper_RS
+	WITH (WAIT_AT_LOW_PRIORITY (MAX_DURATION = 30 MINUTES, ABORT_AFTER_WAIT = SELF));
 
 	COMMIT TRANSACTION;
 
@@ -657,4 +659,3 @@ Please open an issue at https://github.com/idsdavidgutierrez/fit-sql-faster-time
 
 	RETURN;
 END;
-
