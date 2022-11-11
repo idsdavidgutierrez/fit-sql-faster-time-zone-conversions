@@ -14,7 +14,7 @@ Microsoft made performance improvements to `AT TIME ZONE` in Azure SQL Database 
 
 # Requirements
 
-The code works on SQL Server 2016 SP1 and later, SQL Server 2017 and later, and Azure SQL Database. It likely works on Azure SQL Managed Instance as well but this has not been tested.
+The code works on SQL Server 2016 SP1 and later, SQL Server 2017 and later, and Azure SQL Database. SQL Server Enterprise Edition is not required. The code likely works on Azure SQL Managed Instance as well but this has not been tested.
 
 The `RefreshTimeZoneConversionHelperTable` stored procedure must be scheduled to execute on a recurring basis.
 
